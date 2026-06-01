@@ -1,4 +1,6 @@
 import type { ChatMessage as ChatMessageType } from '../types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -61,7 +63,11 @@ export function ChatMessageItem({ message }: ChatMessageProps) {
                 : 'bg-gradient-to-br from-[#1a2f2f] to-[#0d1f1f] border border-[#2d5a5a]/50 rounded-tl-sm'
             }`}
           >
-            <p className="text-[#e8e4dc] text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+            <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
           </div>
 
           {/* Timestamp */}
