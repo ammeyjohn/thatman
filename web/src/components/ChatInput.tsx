@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Sparkles, Loader2 } from 'lucide-react';
+import { Send, Square } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 
 const quickActions = [
@@ -10,7 +10,7 @@ const quickActions = [
 ];
 
 export function ChatInput() {
-  const { inputValue, setInputValue, sendMessage, isLoading } = useChatStore();
+  const { inputValue, setInputValue, sendMessage, isLoading, stopGeneration, streamStats } = useChatStore();
   const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -33,6 +33,9 @@ export function ChatInput() {
     setInputValue(command);
     textareaRef.current?.focus();
   };
+
+  // 计算上下文百分比
+  const contextPercent = Math.round((streamStats.contextTokens / streamStats.contextMax) * 100);
 
   return (
     <div className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30">
@@ -73,24 +76,41 @@ export function ChatInput() {
           />
         </div>
 
-        <button
-          onClick={handleSend}
-          disabled={!inputValue.trim() || isLoading}
-          className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${
-            inputValue.trim() && !isLoading
-              ? 'bg-gradient-to-br from-[#c9a227] to-[#a08020] hover:from-[#d0aa30] hover:to-[#b09030] shadow-lg shadow-[#c9a227]/20'
-              : 'bg-[#2d5a5a]/30 cursor-not-allowed'
-          }`}
-        >
-          {isLoading ? (
-            <Loader2 className="w-5 h-5 text-[#5a7a7a] animate-spin" />
-          ) : (
+        {isLoading ? (
+          <button
+            onClick={stopGeneration}
+            className="flex items-center justify-center w-10 h-10 rounded-lg bg-red-500/80 hover:bg-red-500 transition-all duration-200 shadow-lg shadow-red-500/20"
+            title="停止生成"
+          >
+            <Square className="w-5 h-5 text-white fill-white" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!inputValue.trim()}
+            className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${
+              inputValue.trim()
+                ? 'bg-gradient-to-br from-[#c9a227] to-[#a08020] hover:from-[#d0aa30] hover:to-[#b09030] shadow-lg shadow-[#c9a227]/20'
+                : 'bg-[#2d5a5a]/30 cursor-not-allowed'
+            }`}
+          >
             <Send className={`w-5 h-5 ${inputValue.trim() ? 'text-[#0a0a0f]' : 'text-[#5a7a7a]'}`} />
-          )}
-        </button>
+          </button>
+        )}
       </div>
 
-
+      {/* Stream Stats */}
+      {isLoading && (
+        <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[#5a7a7a]">
+          <span>
+            Context: {streamStats.contextTokens}/{streamStats.contextMax} ({contextPercent}%)
+          </span>
+          <span>
+            Output: {streamStats.outputTokens}/{streamStats.outputMax === null ? '∞' : streamStats.outputMax}
+          </span>
+          <span>{streamStats.tokensPerSecond.toFixed(1)} t/s</span>
+        </div>
+      )}
     </div>
   );
 }
