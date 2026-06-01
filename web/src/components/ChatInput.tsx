@@ -53,11 +53,11 @@ export function ChatInput() {
 
       {/* Input Area */}
       <div
-        className={`relative flex items-end gap-3 p-3 bg-[#1a2f2f]/50 rounded-xl border transition-all duration-300 ${
-          isFocused ? 'border-[#3d7a7a]/50 shadow-lg shadow-[#3d7a7a]/10' : 'border-[#2d5a5a]/30'
+        className={`relative flex items-end gap-3 p-3 bg-[#1a2f2f]/50 rounded-xl transition-all duration-300 ${
+          isFocused ? 'shadow-lg shadow-[#3d7a7a]/10' : ''
         }`}
       >
-        <div className="flex-1">
+        <div className="flex-1 h-full">
           <textarea
             ref={textareaRef}
             value={inputValue}
@@ -66,10 +66,10 @@ export function ChatInput() {
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             placeholder={isLoading ? 'AI 思考中...' : '输入指令与AI交互...'}
-            rows={1}
+            rows={3}
             disabled={isLoading}
-            className="w-full bg-transparent text-[#e8e4dc] placeholder-[#5a7a7a] text-sm resize-none outline-none max-h-32 scrollbar-hide disabled:opacity-50"
-            style={{ minHeight: '24px' }}
+            className="w-full h-full bg-transparent text-[#e8e4dc] placeholder-[#5a7a7a] text-sm resize-none outline-none scrollbar-hide disabled:opacity-50 border-0 focus:ring-0 focus:border-0"
+            style={{ minHeight: '72px' }}
           />
         </div>
 
@@ -90,11 +90,7 @@ export function ChatInput() {
         </button>
       </div>
 
-      {/* Hint */}
-      <div className="flex items-center justify-center gap-2 mt-2">
-        <Sparkles className="w-3 h-3 text-[#5a7a7a]" />
-        <span className="text-[10px] text-[#5a7a7a]">AI 将基于你的境界和当前环境生成动态回复</span>
-      </div>
+
     </div>
   );
 }
