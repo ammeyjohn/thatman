@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>青墟灵修志</title>
     <script type="module">
+      // 加载应用配置
+      import { config } from '/src/config/index.ts';
+      window.APP_CONFIG = config;
+      console.log('[Config] 配置加载完成:', config);
+    </script>
+    <script type="module">
       if (import.meta.hot?.on) {
         import.meta.hot.on('vite:error', (error) => {
           if (error.err) {

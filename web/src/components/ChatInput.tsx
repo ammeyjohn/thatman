@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Sparkles } from 'lucide-react';
+import { Send, Sparkles, Loader2 } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 
 const quickActions = [
@@ -10,31 +10,16 @@ const quickActions = [
 ];
 
 export function ChatInput() {
-  const { inputValue, setInputValue, addMessage } = useChatStore();
+  const { inputValue, setInputValue, sendMessage, isLoading } = useChatStore();
   const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSend = () => {
-    if (!inputValue.trim()) return;
+  const handleSend = async () => {
+    if (!inputValue.trim() || isLoading) return;
 
-    addMessage({
-      sender: 'player',
-      content: inputValue.trim(),
-      type: 'normal',
-    });
-
+    const content = inputValue.trim();
     setInputValue('');
-
-    // Simulate AI response
-    setTimeout(() => {
-      addMessage({
-        sender: 'npc',
-        senderName: '云溪村长',
-        senderAvatar: '👴',
-        content: '道友所言甚是，修仙之路需循序渐进，不可急于求成。',
-        type: 'normal',
-      });
-    }, 1000);
+    await sendMessage(content);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -57,7 +42,8 @@ export function ChatInput() {
           <button
             key={action.label}
             onClick={() => handleQuickAction(action.command)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2f2f]/50 hover:bg-[#2d5a5a]/30 border border-[#2d5a5a]/30 hover:border-[#3d7a7a]/50 rounded-full transition-all duration-200 flex-shrink-0"
+            disabled={isLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2f2f]/50 hover:bg-[#2d5a5a]/30 border border-[#2d5a5a]/30 hover:border-[#3d7a7a]/50 rounded-full transition-all duration-200 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="text-sm">{action.icon}</span>
             <span className="text-xs text-[#a0c0c0] hover:text-[#e8e4dc]">{action.label}</span>
@@ -79,23 +65,28 @@ export function ChatInput() {
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder="输入指令与AI交互..."
+            placeholder={isLoading ? 'AI 思考中...' : '输入指令与AI交互...'}
             rows={1}
-            className="w-full bg-transparent text-[#e8e4dc] placeholder-[#5a7a7a] text-sm resize-none outline-none max-h-32 scrollbar-hide"
+            disabled={isLoading}
+            className="w-full bg-transparent text-[#e8e4dc] placeholder-[#5a7a7a] text-sm resize-none outline-none max-h-32 scrollbar-hide disabled:opacity-50"
             style={{ minHeight: '24px' }}
           />
         </div>
 
         <button
           onClick={handleSend}
-          disabled={!inputValue.trim()}
+          disabled={!inputValue.trim() || isLoading}
           className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${
-            inputValue.trim()
+            inputValue.trim() && !isLoading
               ? 'bg-gradient-to-br from-[#c9a227] to-[#a08020] hover:from-[#d0aa30] hover:to-[#b09030] shadow-lg shadow-[#c9a227]/20'
               : 'bg-[#2d5a5a]/30 cursor-not-allowed'
           }`}
         >
-          <Send className={`w-5 h-5 ${inputValue.trim() ? 'text-[#0a0a0f]' : 'text-[#5a7a7a]'}`} />
+          {isLoading ? (
+            <Loader2 className="w-5 h-5 text-[#5a7a7a] animate-spin" />
+          ) : (
+            <Send className={`w-5 h-5 ${inputValue.trim() ? 'text-[#0a0a0f]' : 'text-[#5a7a7a]'}`} />
+          )}
         </button>
       </div>
 
