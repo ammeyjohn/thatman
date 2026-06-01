@@ -43,67 +43,6 @@ export function CharacterPanel() {
             </span>
           </div>
         </div>
-
-        {/* Spirit Root */}
-        <div className="mb-6 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-[#a0c0c0]">灵根</span>
-            <span className="text-sm text-[#3d9a9a] font-medium">{character.spiritRoot}</span>
-          </div>
-          <div className="flex items-center justify-between mt-2">
-            <span className="text-xs text-[#a0c0c0]">等级</span>
-            <span className="text-sm text-[#e8e4dc] font-medium">Lv.{character.level}</span>
-          </div>
-        </div>
-
-        {/* Status Bars */}
-        <div className="mb-6">
-          <StatusBar
-            label="生命"
-            current={character.health}
-            max={character.maxHealth}
-            color="#c94e4e"
-            icon="❤️"
-          />
-          <StatusBar
-            label="灵力"
-            current={character.mana}
-            max={character.maxMana}
-            color="#4e8ac9"
-            icon="✨"
-          />
-          <StatusBar
-            label="神识"
-            current={character.spirit}
-            max={character.maxSpirit}
-            color="#9a4ec9"
-            icon="👁"
-          />
-        </div>
-
-        {/* Equipment */}
-        <div>
-          <h4 className="text-[#a0c0c0] text-sm font-medium mb-3 flex items-center gap-2">
-            <span>⚔️</span>
-            <span>装备</span>
-          </h4>
-          <div className="grid grid-cols-3 gap-2">
-            {character.equipment.map((item) => (
-              <div
-                key={item.id}
-                className="aspect-square bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30 flex flex-col items-center justify-center gap-1 hover:border-[#c9a227]/50 transition-colors cursor-pointer group"
-                title={item.name}
-              >
-                <div className="text-[#3d7a7a] group-hover:text-[#c9a227] transition-colors">
-                  {equipmentIcons[item.icon]}
-                </div>
-                <span className="text-[10px] text-[#a0c0c0] truncate w-full text-center px-1">
-                  {item.name}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
