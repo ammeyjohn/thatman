@@ -12,9 +12,9 @@ export function CharacterPanel() {
   const { character } = useGameStore();
 
   return (
-    <div className="w-[280px] bg-gradient-to-b from-[#0d1f1f] to-[#0a1515] border-r border-[#2d5a5a]/30 flex flex-col">
+    <div className="w-[280px] bg-[#0d1f1f] border-r border-[#2d5a5a]/30 flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-[#2d5a5a]/30">
+      <div className="p-4 border-b border-[#2d5a5a]/30 bg-[#0d1f1f]">
         <div className="flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-[#c9a227]" />
           <h2 className="text-[#e8e4dc] font-bold text-lg" style={{ fontFamily: 'Noto Serif SC, serif' }}>
