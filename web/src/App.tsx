@@ -12,7 +12,7 @@ function App() {
     <div className="h-screen w-screen overflow-hidden bg-[#0a0a0f] flex">
       {/* Left Panel */}
       <div
-        className={`relative flex flex-col transition-all duration-300 ease-in-out ${
+        className={`bg-[#0d1f1f] relative flex flex-col transition-all duration-300 ease-in-out ${
           leftCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-[280px] opacity-100'
         }`}
       >
@@ -60,7 +60,7 @@ function App() {
 
       {/* Right Panel */}
       <div
-        className={`relative flex flex-col transition-all duration-300 ease-in-out ${
+        className={`bg-[#0d1f1f] relative flex flex-col transition-all duration-300 ease-in-out ${
           rightCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-[280px] opacity-100'
         }`}
       >

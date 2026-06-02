@@ -1,26 +1,20 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import HomePage from '@/pages/HomePage.vue'
+import { createBrowserRouter, Navigate } from 'react-router-dom';
+import Home from '@/pages/Home';
 
 // 定义路由配置
-const routes = [
+export const router = createBrowserRouter([
   {
     path: '/',
-    name: 'home',
-    component: HomePage,
+    element: <Home />,
   },
   {
     path: '/about',
-    name: 'about',
-    component: {
-      template: '<div class="text-center text-xl p-8">About Page - Coming Soon</div>',
-    },
+    element: <div className="text-center text-xl p-8">About Page - Coming Soon</div>,
   },
-]
+  {
+    path: '*',
+    element: <Navigate to="/" replace />,
+  },
+]);
 
-// 创建路由实例
-const router = createRouter({
-  history: createWebHistory(),
-  routes,
-})
-
-export default router
+export default router;
