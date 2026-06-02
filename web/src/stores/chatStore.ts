@@ -303,19 +303,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let outputTokens = 0;
 
     try {
-      // 构建消息历史
-      const chatMessages = messages
-        .filter((m) => m.sender !== 'system')
-        .map((m) => ({
-          role: m.sender === 'player' ? 'user' : 'assistant',
-          content: m.content,
-        }));
-
-      // 添加当前用户消息
-      chatMessages.push({
+      // 只发送当前用户消息，不包含历史聊天记录
+      const chatMessages = [{
         role: 'user',
         content: content,
-      });
+      }];
 
       const response = await fetch(`${config.API_BASE_URL}/chat/completions`, {
         method: 'POST',
