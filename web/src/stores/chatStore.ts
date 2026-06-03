@@ -1,12 +1,194 @@
 import { create } from 'zustand';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, StreamParseState, WorldState } from '../types';
 import { config } from '../config';
+import { useGameStore } from './gameStore';
 
 let messageIdCounter = 0;
 const generateId = () => {
   messageIdCounter += 1;
   return `${Date.now()}-${messageIdCounter}`;
 };
+
+// 流式JSON解析器 - 支持增量解析JSON
+class StreamingJSONParser {
+  private buffer = '';
+  private state: StreamParseState = {
+    story: '',
+    options: [],
+    hint: '',
+    panel: ''
+  };
+  private onUpdate: (state: StreamParseState) => void;
+
+  constructor(onUpdate: (state: StreamParseState) => void) {
+    this.onUpdate = onUpdate;
+  }
+
+  // 提取JSON中指定键的值（支持嵌套键如 "scene_info.location"）
+  private extractValue(jsonStr: string, keyPath: string): string | null {
+    const keys = keyPath.split('.');
+    let currentStr = jsonStr;
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const isLast = i === keys.length - 1;
+
+      if (isLast) {
+        // 匹配 "key": "value" 或 "key":"value" 格式
+        const pattern = new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`, 'i');
+        const match = currentStr.match(pattern);
+        if (match) {
+          return match[1];
+        }
+        // 匹配不完整的情况，尝试提取部分值
+        const partialPattern = new RegExp(`"${key}"\\s*:\\s*"([^"]*)$`, 'i');
+        const partialMatch = currentStr.match(partialPattern);
+        if (partialMatch) {
+          return partialMatch[1];
+        }
+      } else {
+        // 匹配嵌套对象
+        const pattern = new RegExp(`"${key}"\\s*:\\s*\\{([^}]*)\\}`, 'i');
+        const match = currentStr.match(pattern);
+        if (match) {
+          currentStr = '{' + match[1] + '}';
+        } else {
+          // 尝试匹配不完整的嵌套对象
+          const partialPattern = new RegExp(`"${key}"\\s*:\\s*\\{([^}]*)$`, 'i');
+          const partialMatch = currentStr.match(partialPattern);
+          if (partialMatch) {
+            currentStr = '{' + partialMatch[1];
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // 提取 markdown 内容（去除 ```markdown 和 ``` 标记，以及特殊字符）
+  private extractMarkdown(content: string): string {
+    // 匹配 ```markdown\n?...\n?``` 或 ```...\n?``` 格式
+    const markdownPattern = /```(?:markdown)?\n?([\s\S]*?)(?:\n?```|$)/i;
+    const match = content.match(markdownPattern);
+    let extractedContent = content;
+    if (match) {
+      extractedContent = match[1];
+    }
+    // 去除换行符、回车符等特殊字符
+    return extractedContent
+      .replace(/\\n/g, '\n')  // 将转义的 \n 转换为实际换行
+      .replace(/\\r/g, '')    // 去除 \r
+      .replace(/\\t/g, '\t')  // 将转义的 \t 转换为实际制表符
+      .replace(/\\"/g, '"')   // 将转义的 \" 转换为实际引号
+      .replace(/\\\\/g, '\\') // 将转义的 \\ 转换为实际反斜杠
+      .trim();
+  }
+
+  // 解析chunk并更新状态
+  parse(chunk: string): void {
+    this.buffer += chunk;
+
+    // 尝试提取 story
+    const story = this.extractValue(this.buffer, 'story');
+    if (story !== null) {
+      // 提取 markdown 内容（去除代码块标记）
+      const markdownContent = this.extractMarkdown(story);
+      if (markdownContent !== this.state.story) {
+        this.state.story = markdownContent;
+      }
+    }
+
+    // 尝试提取 scene_info.location
+    const location = this.extractValue(this.buffer, 'scene_info.location');
+    if (location !== null) {
+      if (!this.state.scene_info) {
+        this.state.scene_info = {};
+      }
+      if (location !== this.state.scene_info.location) {
+        this.state.scene_info.location = location;
+      }
+    }
+
+    // 尝试提取 scene_info.time
+    const time = this.extractValue(this.buffer, 'scene_info.time');
+    if (time !== null) {
+      if (!this.state.scene_info) {
+        this.state.scene_info = {};
+      }
+      if (time !== this.state.scene_info.time) {
+        this.state.scene_info.time = time;
+      }
+    }
+
+    // 尝试提取 scene_info.env_effect
+    const envEffect = this.extractValue(this.buffer, 'scene_info.env_effect');
+    if (envEffect !== null) {
+      if (!this.state.scene_info) {
+        this.state.scene_info = {};
+      }
+      if (envEffect !== this.state.scene_info.env_effect) {
+        this.state.scene_info.env_effect = envEffect;
+      }
+    }
+
+    // 尝试提取 hint
+    const hint = this.extractValue(this.buffer, 'hint');
+    if (hint !== null && hint !== this.state.hint) {
+      this.state.hint = hint;
+    }
+
+    // 尝试提取 panel
+    const panel = this.extractValue(this.buffer, 'panel');
+    if (panel !== null && panel !== this.state.panel) {
+      this.state.panel = panel;
+    }
+
+    // 尝试提取 options 数组
+    const options = this.extractArray(this.buffer, 'options');
+    if (options !== null) {
+      this.state.options = options;
+    }
+
+    // 触发更新回调
+    this.onUpdate({ ...this.state });
+  }
+
+  // 提取JSON中的数组
+  private extractArray(jsonStr: string, key: string): string[] | null {
+    // 匹配 "key": ["value1", "value2", ...] 格式
+    const pattern = new RegExp(`"${key}"\\s*:\\s*\\[([^\\]]*)\\]`, 'i');
+    const match = jsonStr.match(pattern);
+    if (match) {
+      // 解析数组内容
+      const arrayContent = match[1];
+      // 提取所有字符串值
+      const stringPattern = /"([^"]*)"/g;
+      const results: string[] = [];
+      let stringMatch;
+      while ((stringMatch = stringPattern.exec(arrayContent)) !== null) {
+        results.push(stringMatch[1]);
+      }
+      return results;
+    }
+    return null;
+  }
+
+  // 获取当前完整状态
+  getState(): StreamParseState {
+    return { ...this.state };
+  }
+
+  // 重置解析器
+  reset(): void {
+    this.buffer = '';
+    this.state = {
+      story: '',
+      options: [],
+      hint: '',
+      panel: ''
+    };
+  }
+}
 
 export interface StreamStats {
   contextTokens: number;
@@ -25,6 +207,7 @@ interface ChatState {
   abortController: AbortController | null;
   addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
   updateLastMessage: (content: string) => void;
+  updateLastMessageOptions: (options: string[]) => void;
   setInputValue: (value: string) => void;
   setStreamingContent: (content: string) => void;
   clearMessages: () => void;
@@ -75,6 +258,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const lastMessage = messages[messages.length - 1];
       if (lastMessage && lastMessage.sender === 'npc') {
         lastMessage.content = content;
+      }
+      return { messages };
+    }),
+
+  updateLastMessageOptions: (options) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        lastMessage.options = options;
       }
       return { messages };
     }),
@@ -159,6 +352,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const startTime = Date.now();
     let outputTokens = 0;
 
+    // 创建流式JSON解析器
+    const jsonParser = new StreamingJSONParser((parseState) => {
+      // 实时更新 story 到聊天消息
+      if (parseState.story) {
+        updateLastMessage(parseState.story);
+        set({ streamingContent: parseState.story });
+      }
+
+      // 实时更新场景信息到游戏状态
+      if (parseState.scene_info) {
+        const gameStore = useGameStore.getState();
+        const worldUpdates: Partial<WorldState> = {};
+
+        if (parseState.scene_info.location) {
+          worldUpdates.location = parseState.scene_info.location;
+        }
+        if (parseState.scene_info.time) {
+          worldUpdates.time = parseState.scene_info.time;
+        }
+
+        if (Object.keys(worldUpdates).length > 0) {
+          gameStore.updateWorld(worldUpdates);
+        }
+      }
+    });
+
     try {
       // 构建消息历史
       const chatMessages = previousMessages
@@ -187,7 +406,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let fullContent = '';
 
       if (!reader) {
         throw new Error('无法获取响应流');
@@ -213,7 +431,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
-                fullContent += delta;
                 outputTokens += 1;
 
                 const elapsedSeconds = (Date.now() - startTime) / 1000;
@@ -227,9 +444,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   },
                 }));
 
-                const cleanedContent = fullContent.replace(/\n\s*\n+/g, '\n');
-                updateLastMessage(cleanedContent);
-                set({ streamingContent: cleanedContent });
+                // 使用流式JSON解析器解析内容
+                jsonParser.parse(delta);
               }
             } catch {
               // 忽略解析错误的行
@@ -245,6 +461,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updateLastMessage(`重新生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
+      // 流式解析完成后，保存 options 到最后一条消息
+      const finalState = jsonParser.getState();
+      if (finalState.options && finalState.options.length > 0) {
+        get().updateLastMessageOptions(finalState.options);
+      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },
@@ -302,6 +523,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const startTime = Date.now();
     let outputTokens = 0;
 
+    // 创建流式JSON解析器
+    const jsonParser = new StreamingJSONParser((parseState) => {
+      // 实时更新 story 到聊天消息
+      if (parseState.story) {
+        updateLastMessage(parseState.story);
+        set({ streamingContent: parseState.story });
+      }
+
+      // 实时更新场景信息到游戏状态
+      if (parseState.scene_info) {
+        const gameStore = useGameStore.getState();
+        const worldUpdates: Partial<WorldState> = {};
+
+        if (parseState.scene_info.location) {
+          worldUpdates.location = parseState.scene_info.location;
+        }
+        if (parseState.scene_info.time) {
+          worldUpdates.time = parseState.scene_info.time;
+        }
+
+        if (Object.keys(worldUpdates).length > 0) {
+          gameStore.updateWorld(worldUpdates);
+        }
+      }
+    });
+
     try {
       // 只发送当前用户消息，不包含历史聊天记录
       const chatMessages = [{
@@ -328,7 +575,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let fullContent = '';
 
       if (!reader) {
         throw new Error('无法获取响应流');
@@ -355,7 +601,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
-                fullContent += delta;
                 outputTokens += 1;
 
                 // 计算生成速度
@@ -371,10 +616,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   },
                 }));
 
-                // 去除文本中间的空行
-                const cleanedContent = fullContent.replace(/\n\s*\n+/g, '\n');
-                updateLastMessage(cleanedContent);
-                set({ streamingContent: cleanedContent });
+                // 使用流式JSON解析器解析内容
+                jsonParser.parse(delta);
               }
             } catch {
               // 忽略解析错误的行
@@ -391,6 +634,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updateLastMessage(`发送失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
+      // 流式解析完成后，保存 options 到最后一条消息
+      const finalState = jsonParser.getState();
+      if (finalState.options && finalState.options.length > 0) {
+        get().updateLastMessageOptions(finalState.options);
+      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },

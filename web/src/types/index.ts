@@ -47,4 +47,31 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   type: 'normal' | 'event' | 'system';
+  options?: string[];
+}
+
+// 游戏响应JSON结构
+export interface GameResponse {
+  scene_info: {
+    location: string;
+    time: string;
+    env_effect: string;
+  };
+  story: string;
+  options: string[];
+  hint: string;
+  panel: string;
+}
+
+// 流式解析状态
+export interface StreamParseState {
+  scene_info?: {
+    location?: string;
+    time?: string;
+    env_effect?: string;
+  };
+  story: string;
+  options: string[];
+  hint: string;
+  panel: string;
 }

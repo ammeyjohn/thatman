@@ -8,9 +8,10 @@ import { ConfirmDialog } from './ConfirmDialog';
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  onOptionClick?: (option: string) => void;
 }
 
-export function ChatMessageItem({ message }: ChatMessageProps) {
+export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
   const { deleteMessage, editMessage, regenerateMessage } = useChatStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -214,6 +215,21 @@ export function ChatMessageItem({ message }: ChatMessageProps) {
 
             {/* Action Buttons */}
             {isPlayer ? playerButtons : npcButtons}
+
+            {/* Options Buttons */}
+            {!isPlayer && message.options && message.options.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {message.options.map((option, index) => (
+                  <button
+                    key={index}
+                    onClick={() => onOptionClick?.(option)}
+                    className="px-3 py-1.5 text-sm bg-[#2d5a5a]/30 hover:bg-[#2d5a5a]/50 border border-[#3d7a7a]/50 hover:border-[#3d7a7a] rounded-lg text-[#a0c0c0] hover:text-[#e8e4dc] transition-all duration-200"
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

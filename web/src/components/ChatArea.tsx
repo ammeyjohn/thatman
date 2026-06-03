@@ -5,7 +5,7 @@ import { ChatInput } from './ChatInput';
 import { MessageSquare } from 'lucide-react';
 
 export function ChatArea() {
-  const { messages } = useChatStore();
+  const { messages, sendMessage } = useChatStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -49,7 +49,11 @@ export function ChatArea() {
         ) : (
           <>
             {messages.map((message) => (
-              <ChatMessageItem key={message.id} message={message} />
+              <ChatMessageItem
+                key={message.id}
+                message={message}
+                onOptionClick={(option) => sendMessage(option)}
+              />
             ))}
             <div ref={messagesEndRef} />
           </>
