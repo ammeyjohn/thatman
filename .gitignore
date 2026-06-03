@@ -35,3 +35,5 @@ build/
 *.cache
 __pycache__/
 *.pyc
+
+data/

@@ -1,0 +1,13 @@
+llama-server \
+  -m "$MODELSCOPE/unsloth/Qwen3___6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf" \
+  -t 12 \
+  -ngl 99 \
+  --port 7778 \
+  --host 0.0.0.0 \
+  --temp 0.7 \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 3 \
+  --flash-attn on \
+  --cache-type-k q4_0 \
+  --cache-type-v q4_0 \
+  --reasoning off

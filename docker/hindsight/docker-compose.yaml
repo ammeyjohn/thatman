@@ -1,0 +1,18 @@
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
+      HINDSIGHT_API_LLM_API_KEY: dummy
+      HF_ENDPOINT: https://hf-mirror.com
+    volumes:
+      - ${HOME}/.hindsight-docker:/home/hindsight/.pg0
