@@ -1,13 +1,15 @@
-llama-server \
-  -m "$MODELSCOPE/unsloth/Qwen3___6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf" \
-  -t 12 \
-  -ngl 99 \
-  --port 7778 \
+llama-server -m "$MODELSCOPE/unsloth/Qwen3___6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf" \
+  --port 7779 \
   --host 0.0.0.0 \
-  --temp 0.7 \
-  --spec-type draft-mtp \
-  --spec-draft-n-max 3 \
+  -ngl 99 \
+  -c 65536 \
+  -b 2048 \
+  -ub 1024 \
   --flash-attn on \
-  --cache-type-k q4_0 \
-  --cache-type-v q4_0 \
-  --reasoning off
+  --spec-type draft-mtp \
+  --spec-draft-n-max 2 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --reasoning off \
+  -t 10 \
+  --parallel 1
