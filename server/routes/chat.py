@@ -2,6 +2,7 @@ import json
 import time
 import sys
 import os
+import traceback
 from flask import Blueprint, request, Response, stream_with_context
 
 # 导入 server 的配置
@@ -19,6 +20,14 @@ from agents.llm_client import get_llm_client
 AGENTS_MODEL_NAME = llm_config.model_name
 
 chat_bp = Blueprint('chat', __name__)
+
+
+def log_error(context: str, error: Exception):
+    """打印详细错误日志"""
+    stack_trace = traceback.format_exc()
+    print(f"\033[31m[ERROR] {context}:\033[0m")
+    print(f"\033[31m  Error: {str(error)}\033[0m")
+    print(f"\033[90m{stack_trace}\033[0m")
 
 # 初始化 LLM 客户端
 llm_client = get_llm_client(streaming=False)
@@ -38,6 +47,9 @@ def chat_completions():
             }
         }, 400
 
+    # 从请求头获取用户ID
+    user_id = request.headers.get('X-User-Id', 'anonymous')
+
     messages = data.get('messages', [])
     stream = data.get('stream', False)
     temperature = data.get('temperature', 0.7)
@@ -48,15 +60,18 @@ def chat_completions():
             return stream_chat_completion(
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                user_id=user_id
             )
         else:
             return non_stream_chat_completion(
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                user_id=user_id
             )
     except Exception as e:
+        log_error(f"chat_completions (user: {user_id})", e)
         return {
             'error': {
                 'message': str(e),
@@ -66,13 +81,43 @@ def chat_completions():
         }, 500
 
 
-def non_stream_chat_completion(messages, temperature, max_tokens):
+def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous'):
     """非流式聊天完成"""
-    kwargs = {'temperature': temperature}
-    if max_tokens is not None:
-        kwargs['max_tokens'] = max_tokens
+    try:
+        kwargs = {'temperature': temperature}
+        if max_tokens is not None:
+            kwargs['max_tokens'] = max_tokens
 
-    content = llm_client.chat(messages, **kwargs)
+        print(f"\033[36m[INFO] 非流式请求 - user_id: {user_id}, messages: {len(messages)}\033[0m")
+
+        # 根据用户ID获取对应的LLM客户端（带独立记忆）
+        from agents.llm_client import get_llm_client_with_memory
+        user_llm_client = get_llm_client_with_memory(
+            bank_id=f"user-{user_id}",
+            streaming=False
+        )
+
+        # 调用聊天（会自动从用户记忆库和世界记忆库获取记忆）
+        content = user_llm_client.chat(messages, **kwargs)
+
+        # 保存对话到用户记忆库（不保存到世界记忆库）
+        last_user_msg = None
+        for msg in reversed(messages):
+            if msg.get('role') == 'user':
+                last_user_msg = msg.get('content', '')
+                break
+        if last_user_msg and user_llm_client.memory:
+            try:
+                user_llm_client.memory.retain(
+                    content=f"用户: {last_user_msg}\nAI: {content}",
+                    context="conversation"
+                )
+            except Exception as mem_e:
+                # 记忆存储失败不影响主流程，只记录日志
+                print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
+    except Exception as e:
+        log_error(f"non_stream_chat_completion (user: {user_id})", e)
+        raise
 
     # 构建 OpenAI 兼容格式的响应
     return {
@@ -98,66 +143,115 @@ def non_stream_chat_completion(messages, temperature, max_tokens):
     }
 
 
-def stream_chat_completion(messages, temperature, max_tokens):
+def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous'):
     """流式聊天完成"""
-    kwargs = {'temperature': temperature}
-    if max_tokens is not None:
-        kwargs['max_tokens'] = max_tokens
+    try:
+        kwargs = {'temperature': temperature}
+        if max_tokens is not None:
+            kwargs['max_tokens'] = max_tokens
+
+        print(f"\033[36m[INFO] 流式请求 - user_id: {user_id}, messages: {len(messages)}\033[0m")
+
+        # 根据用户ID获取对应的流式LLM客户端（带独立记忆）
+        from agents.llm_client import get_llm_client_with_memory
+        user_llm_client = get_llm_client_with_memory(
+            bank_id=f"user-{user_id}",
+            streaming=True
+        )
+    except Exception as e:
+        log_error(f"stream_chat_completion 初始化失败 (user: {user_id})", e)
+        raise
 
     def generate():
-        # 发送起始事件
-        start_data = {
-            'id': f'chatcmpl-{int(time.time() * 1000)}',
-            'object': 'chat.completion.chunk',
-            'created': int(time.time()),
-            'model': AGENTS_MODEL_NAME,
-            'choices': [
-                {
-                    'index': 0,
-                    'delta': {'role': 'assistant'},
-                    'finish_reason': None
-                }
-            ]
-        }
-        yield f'data: {json.dumps(start_data)}\n\n'
+        try:
+            # 发送起始事件
+            start_data = {
+                'id': f'chatcmpl-{int(time.time() * 1000)}',
+                'object': 'chat.completion.chunk',
+                'created': int(time.time()),
+                'model': AGENTS_MODEL_NAME,
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {'role': 'assistant'},
+                        'finish_reason': None
+                    }
+                ]
+            }
+            yield f'data: {json.dumps(start_data)}\n\n'
 
-        # 使用流式客户端获取响应
-        full_content = ''
-        for chunk in llm_client_stream.stream_chat(messages):
-            if hasattr(chunk, 'content') and chunk.content:
-                content = chunk.content
-                full_content += content
-                data = {
-                    'id': f'chatcmpl-{int(time.time() * 1000)}',
-                    'object': 'chat.completion.chunk',
-                    'created': int(time.time()),
-                    'model': AGENTS_MODEL_NAME,
-                    'choices': [
-                        {
-                            'index': 0,
-                            'delta': {'content': content},
-                            'finish_reason': None
-                        }
-                    ]
-                }
-                yield f'data: {json.dumps(data)}\n\n'
+            # 使用流式客户端获取响应
+            full_content = ''
+            for chunk in user_llm_client.stream_chat(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    content = chunk.content
+                    full_content += content
+                    data = {
+                        'id': f'chatcmpl-{int(time.time() * 1000)}',
+                        'object': 'chat.completion.chunk',
+                        'created': int(time.time()),
+                        'model': AGENTS_MODEL_NAME,
+                        'choices': [
+                            {
+                                'index': 0,
+                                'delta': {'content': content},
+                                'finish_reason': None
+                            }
+                        ]
+                    }
+                    yield f'data: {json.dumps(data)}\n\n'
 
-        # 发送结束事件
-        end_data = {
-            'id': f'chatcmpl-{int(time.time() * 1000)}',
-            'object': 'chat.completion.chunk',
-            'created': int(time.time()),
-            'model': AGENTS_MODEL_NAME,
-            'choices': [
-                {
-                    'index': 0,
-                    'delta': {},
-                    'finish_reason': 'stop'
-                }
-            ]
-        }
-        yield f'data: {json.dumps(end_data)}\n\n'
-        yield 'data: [DONE]\n\n'
+            # 发送结束事件
+            end_data = {
+                'id': f'chatcmpl-{int(time.time() * 1000)}',
+                'object': 'chat.completion.chunk',
+                'created': int(time.time()),
+                'model': AGENTS_MODEL_NAME,
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {},
+                        'finish_reason': 'stop'
+                    }
+                ]
+            }
+            yield f'data: {json.dumps(end_data)}\n\n'
+            yield 'data: [DONE]\n\n'
+
+            # 流式响应结束后，保存完整对话到用户记忆库
+            if full_content and messages:
+                last_user_msg = None
+                for msg in reversed(messages):
+                    if msg.get('role') == 'user':
+                        last_user_msg = msg.get('content', '')
+                        break
+                if last_user_msg and user_llm_client.memory:
+                    try:
+                        user_llm_client.memory.retain(
+                            content=f"用户: {last_user_msg}\nAI: {full_content}",
+                            context="conversation"
+                        )
+                    except Exception as mem_e:
+                        # 记忆存储失败不影响流式响应，只记录日志
+                        print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
+        except Exception as e:
+            log_error(f"stream generate (user: {user_id})", e)
+            # 发送错误事件到客户端
+            error_data = {
+                'id': f'chatcmpl-{int(time.time() * 1000)}',
+                'object': 'chat.completion.chunk',
+                'created': int(time.time()),
+                'model': AGENTS_MODEL_NAME,
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {'content': f'\n[服务器错误: {str(e)}]'},
+                        'finish_reason': 'stop'
+                    }
+                ]
+            }
+            yield f'data: {json.dumps(error_data)}\n\n'
+            yield 'data: [DONE]\n\n'
 
     return Response(
         stream_with_context(generate()),
@@ -186,6 +280,7 @@ def list_models():
             ]
         }
     except Exception as e:
+        log_error("completions", e)
         return {
             'error': {
                 'message': str(e),
@@ -195,7 +290,7 @@ def list_models():
         }, 500
 
 
-@chat_bp.route('/completions', methods=['POST'])
+@chat_bp.route('/embeddings', methods=['POST'])
 def completions():
     """llama.cpp 旧版 completion 接口（非 chat 格式）"""
     data = request.get_json()
@@ -275,6 +370,7 @@ def completions():
             }
 
     except Exception as e:
+        log_error("list_models", e)
         return {
             'error': {
                 'message': str(e),

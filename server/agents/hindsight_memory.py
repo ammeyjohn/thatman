@@ -116,9 +116,14 @@ class HindsightMemoryStore:
                     "empathy": 4,
                 },
             )
+            print(f"\033[32m[INFO] Memory bank '{self.bank_id}' 已创建/确认\033[0m")
         except Exception as e:
-            # Bank 可能已存在，忽略错误
-            print(f"\033[90m[DEBUG] Bank ensure: {e}\033[0m")
+            # Bank 可能已存在，或者是服务暂时不可用
+            error_msg = str(e)
+            if len(error_msg) > 150:
+                error_msg = error_msg[:150] + "..."
+            print(f"\033[33m[WARN] Bank '{self.bank_id}' 创建/确认失败: {error_msg}\033[0m")
+            # 不抛出异常，允许继续使用（后续操作可能会失败，但至少可以初始化）
     
     def retain(
         self,
@@ -146,7 +151,11 @@ class HindsightMemoryStore:
             )
             return True
         except Exception as e:
-            print(f"\033[33m[WARN] Hindsight retain 失败: {e}\033[0m")
+            error_msg = str(e)
+            # 简化错误信息，避免打印过多内容
+            if len(error_msg) > 200:
+                error_msg = error_msg[:200] + "..."
+            print(f"\033[33m[WARN] Hindsight retain 失败 ({self.bank_id}): {error_msg}\033[0m")
             return False
     
     def retain_conversation(

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { ChatMessage, StreamParseState, WorldState } from '../types';
 import { config } from '../config';
 import { useGameStore } from './gameStore';
+import { getOrCreateUserId } from '../lib/user';
 
 let messageIdCounter = 0;
 const generateId = () => {
@@ -391,6 +392,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-User-Id': getOrCreateUserId(),
         },
         body: JSON.stringify({
           messages: chatMessages,
@@ -560,6 +562,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-User-Id': getOrCreateUserId(),
         },
         body: JSON.stringify({
           messages: chatMessages,

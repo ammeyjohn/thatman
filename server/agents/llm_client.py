@@ -101,6 +101,7 @@ class LLMClient:
         load_all_prompts_flag: bool = True,
         enable_memory: bool = False,
         memory_config: Optional[Dict[str, Any]] = None,
+        world_memory_config: Optional[Dict[str, Any]] = None,
     ):
         """
         初始化 LLM 客户端
@@ -110,7 +111,8 @@ class LLMClient:
             auto_load_system_prompt: 是否自动从 prompts/system.md 加载系统提示词
             load_all_prompts_flag: 是否加载所有提示词文件（system.md、assistant.md、user.md）
             enable_memory: 是否启用 hindsight 记忆系统
-            memory_config: 记忆系统配置，如 {"storage_dir": "./memory", "short_term_window": 10}
+            memory_config: 用户记忆系统配置，如 {"bank_id": "user-xxx", "short_term_window": 10}
+            world_memory_config: 世界记忆库配置，如 {"bank_id": "world", "short_term_window": 10}
         """
         callbacks = [StreamingStdOutCallbackHandler()] if streaming else []
 
@@ -136,9 +138,15 @@ class LLMClient:
 
         # 初始化 hindsight 记忆系统
         self.memory: Optional[HindsightMemory] = None
+        self.world_memory: Optional[HindsightMemory] = None
+
         if enable_memory:
             memory_config = memory_config or {}
             self.memory = HindsightMemory(**memory_config)
+
+            # 初始化世界记忆库（如果提供了配置）
+            if world_memory_config:
+                self.world_memory = HindsightMemory(**world_memory_config)
 
     def _build_messages_with_memory(
         self,
@@ -147,6 +155,7 @@ class LLMClient:
     ) -> List[Dict[str, str]]:
         """
         构建包含 hindsight 记忆的消息列表
+        同时从用户记忆库和世界记忆库获取记忆
 
         Args:
             messages: 原始消息列表
@@ -155,7 +164,7 @@ class LLMClient:
         Returns:
             包含记忆上下文的消息列表
         """
-        if not use_memory or not self.memory:
+        if not use_memory:
             return messages
 
         # 获取最后一条用户消息作为查询
@@ -168,15 +177,41 @@ class LLMClient:
         if not last_user_msg:
             return messages
 
-        # 构建 hindsight 记忆上下文
-        memory_context = self.memory.build_context(
-            query=last_user_msg,
-            max_memories=5,
-            include_recent=True,
-        )
+        # 收集所有记忆上下文
+        memory_parts = []
 
-        if not memory_context:
+        # 1. 从用户记忆库获取记忆
+        if self.memory:
+            try:
+                user_memory_context = self.memory.build_context(
+                    query=last_user_msg,
+                    max_memories=5,
+                    include_recent=True,
+                )
+                if user_memory_context:
+                    memory_parts.append(f"【你的个人记忆】\n{user_memory_context}")
+            except Exception as e:
+                print(f"\033[33m[WARN] 用户记忆库查询失败: {e}\033[0m")
+
+        # 2. 从世界记忆库获取记忆
+        if self.world_memory:
+            try:
+                world_memory_context = self.world_memory.build_context(
+                    query=last_user_msg,
+                    max_memories=5,
+                    include_recent=False,  # 世界记忆不需要短期对话历史
+                )
+                if world_memory_context:
+                    memory_parts.append(f"【世界背景知识】\n{world_memory_context}")
+            except Exception as e:
+                print(f"\033[33m[WARN] 世界记忆库查询失败: {e}\033[0m")
+
+        # 如果没有获取到任何记忆，直接返回原消息
+        if not memory_parts:
             return messages
+
+        # 合并所有记忆上下文
+        combined_memory = "\n\n".join(memory_parts)
 
         # 构建新的消息列表，插入记忆上下文
         result_messages = []
@@ -185,7 +220,7 @@ class LLMClient:
         for msg in messages:
             if msg.get("role") == "system":
                 # 在系统提示词后附加记忆上下文
-                enhanced_content = f"{msg.get('content', '')}\n\n{memory_context}"
+                enhanced_content = f"{msg.get('content', '')}\n\n{combined_memory}"
                 result_messages.append({"role": "system", "content": enhanced_content})
                 has_system = True
             else:
@@ -193,7 +228,7 @@ class LLMClient:
 
         # 如果没有系统消息，在开头添加记忆上下文
         if not has_system:
-            result_messages.insert(0, {"role": "system", "content": memory_context})
+            result_messages.insert(0, {"role": "system", "content": combined_memory})
 
         return result_messages
 
@@ -388,6 +423,7 @@ def get_llm_client(
     load_all_prompts_flag: bool = True,
     enable_memory: bool = False,
     memory_config: Optional[Dict[str, Any]] = None,
+    world_memory_config: Optional[Dict[str, Any]] = None,
 ) -> LLMClient:
     """
     获取 LLM 客户端实例
@@ -397,7 +433,8 @@ def get_llm_client(
         auto_load_system_prompt: 是否自动从 prompts/system.md 加载系统提示词
         load_all_prompts_flag: 是否加载所有提示词文件（system.md、assistant.md、user.md）
         enable_memory: 是否启用 hindsight 记忆系统
-        memory_config: 记忆系统配置
+        memory_config: 用户记忆系统配置
+        world_memory_config: 世界记忆库配置
 
     Returns:
         LLMClient 实例
@@ -408,6 +445,7 @@ def get_llm_client(
         load_all_prompts_flag=load_all_prompts_flag,
         enable_memory=enable_memory,
         memory_config=memory_config,
+        world_memory_config=world_memory_config,
     )
 
 
@@ -417,16 +455,19 @@ def get_llm_client_with_memory(
     api_key: Optional[str] = None,
     streaming: bool = False,
     mission: Optional[str] = None,
+    enable_world_memory: bool = True,
 ) -> LLMClient:
     """
     获取带 hindsight 记忆的 LLM 客户端实例（便捷函数）
+    同时配置用户记忆库和世界记忆库
 
     Args:
-        bank_id: Hindsight memory bank ID
+        bank_id: Hindsight memory bank ID（用户记忆库ID）
         base_url: Hindsight API 服务地址
         api_key: Hindsight API 密钥
         streaming: 是否启用流式输出
         mission: Bank 使命描述
+        enable_world_memory: 是否启用世界记忆库
 
     Returns:
         启用 hindsight 记忆的 LLMClient 实例
@@ -435,10 +476,22 @@ def get_llm_client_with_memory(
         "bank_id": bank_id,
         "base_url": base_url,
         "api_key": api_key,
-        "mission": mission,
+        "mission": mission or f"Personal memory bank for {bank_id}",
     }
+
+    # 世界记忆库配置
+    world_memory_config = None
+    if enable_world_memory:
+        world_memory_config = {
+            "bank_id": "world",
+            "base_url": base_url,
+            "api_key": api_key,
+            "mission": "Shared world knowledge and lore",
+        }
+
     return get_llm_client(
         streaming=streaming,
         enable_memory=True,
         memory_config=memory_config,
+        world_memory_config=world_memory_config,
     )
