@@ -1,0 +1,31 @@
+# Flask 服务配置
+flask:
+  env: development
+  port: 8080
+  debug: true
+
+# LLM 配置 - 用于配置 llama.cpp OpenAI 兼容服务
+llm:
+  api_base: http://localhost:7778/v1
+  api_key: not-needed
+  model_name: Qwen3.6-27B-UD-Q4_K_XL
+  # 平衡随机性与逻辑性，保证世界演化有变化、无荒诞剧情
+  temperature: 0.65
+  # 约束输出方向，贴合修仙世界观，避免内容跑偏
+  top_p: 0.85
+  # 覆盖剧情、结构化JSON、UI配置完整输出，防止截断
+  max_tokens: 8192
+  # 减少重复剧情与事件，保证演化层层递进
+  frequency_penalty: 0.1
+  # 鼓励新生内容，支撑世界持续自演化
+  presence_penalty: 0.2
+  # 强制结构化输出，适配后端解析与数据库存储
+  response_format:
+    type: json_object
+
+# hindsight 记忆库配置
+hindsight:
+  base_url: http://localhost:8888
+  api_key: null
+  # 世界 bank 名称，用于存储世界演化相关的长期记忆
+  world_bank: world

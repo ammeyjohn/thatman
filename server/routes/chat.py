@@ -4,11 +4,27 @@ import sys
 import os
 import traceback
 import threading
-from typing import Dict
+from typing import Dict, Optional
+from pathlib import Path
 from flask import Blueprint, request, Response, stream_with_context
+import yaml
 
-# 导入 server 的配置
-from config import Config, llm_config
+
+def load_yaml_config() -> dict:
+    """加载 YAML 配置文件"""
+    config_path = Path(__file__).parent.parent / "config.yaml"
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# 加载 YAML 配置
+_yaml_config = load_yaml_config()
+_llm_config = _yaml_config.get("llm", {})
+
+# 从配置获取模型名称
+AGENTS_MODEL_NAME = _llm_config.get("model_name", "Qwen3.6-27B-UD-Q4_K_XL")
 
 # 将 agents 目录加入 Python 路径
 agents_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agents')
@@ -17,9 +33,6 @@ if agents_dir not in sys.path:
 
 # 导入 GameMaster
 from game_master import create_game_master, GameMaster
-
-# 从配置获取模型名称
-AGENTS_MODEL_NAME = llm_config.model_name
 
 chat_bp = Blueprint('chat', __name__)
 

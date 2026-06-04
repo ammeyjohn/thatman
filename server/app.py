@@ -1,8 +1,30 @@
 import traceback
+from pathlib import Path
 from flask import Flask, jsonify
 from flask_cors import CORS
-from config import Config
+import yaml
 from routes.chat import chat_bp
+
+
+def load_yaml_config() -> dict:
+    """加载 YAML 配置文件"""
+    config_path = Path(__file__).parent / "config.yaml"
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# 加载 YAML 配置
+_yaml_config = load_yaml_config()
+_flask_config = _yaml_config.get("flask", {})
+
+
+class Config:
+    """Flask 服务配置类"""
+    FLASK_ENV = _flask_config.get("env", "development")
+    FLASK_PORT = _flask_config.get("port", 8080)
+    FLASK_DEBUG = _flask_config.get("debug", True)
 
 
 def create_app():
