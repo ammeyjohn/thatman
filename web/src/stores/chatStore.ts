@@ -82,6 +82,8 @@ class StreamingJSONParser {
       .replace(/\\t/g, '\t')  // 将转义的 \t 转换为实际制表符
       .replace(/\\"/g, '"')   // 将转义的 \" 转换为实际引号
       .replace(/\\\\/g, '\\') // 将转义的 \\ 转换为实际反斜杠
+      .replace(/\n\n+/g, '\n') // 将多个连续换行替换为单个换行
+      .replace(/^\n+|\n+$/g, '') // 删除开头和结尾的空行
       .trim();
   }
 

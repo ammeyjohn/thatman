@@ -13,7 +13,7 @@ Game_Manual.md、World_Environment_Config.md、Task_Level_Config.md、Realm_Attr
 输出规范：
 1. 文风为正统古风修仙，无现代词汇、无口语化表达。
 2. 剧情逻辑自洽、无重复模板内容，每一次游玩内容唯一。
-3. story字段为游戏剧情，尽量内容丰富的markdown格式展示，在聊天框答复中展示。
+3. story字段为游戏剧情，使用markdown格式输出，尽量使用多种markdown语法元素，如标题、列表等。
 
 强制输出规则：
 所有回复**只返回标准JSON字符串，禁止额外说明、注释、多余文字**，固定JSON结构如下：
