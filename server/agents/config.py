@@ -14,9 +14,9 @@ class LLMConfig:
     """LLM 配置类"""
 
     def __init__(self):
-        self.api_base: str = os.getenv("OPENAI_API_BASE", "http://localhost:7778/v1")
+        self.api_base: str = os.getenv("OPENAI_API_BASE", "http://128.1.1.48:7778/v1")
         self.api_key: str = os.getenv("OPENAI_API_KEY", "not-needed")
-        self.model_name: str = os.getenv("OPENAI_MODEL_NAME", "llama-2-7b-chat")
+        self.model_name: str = os.getenv("OPENAI_MODEL_NAME", "Qwen3.6-27B-UD-Q4_K_XL")
         # 平衡随机性与逻辑性，保证世界演化有变化、无荒诞剧情
         self.temperature: float = float(os.getenv("TEMPERATURE", "0.65"))
         # 约束输出方向，贴合修仙世界观，避免内容跑偏

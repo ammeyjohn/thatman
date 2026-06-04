@@ -2,41 +2,21 @@ import json
 import time
 import sys
 import os
-import importlib.util
 from flask import Blueprint, request, Response, stream_with_context
 
 # 导入 server 的配置
-from config import Config
+from config import Config, llm_config
 
-# 动态加载 agents/llm_client.py
-agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'agents')
-llm_client_path = os.path.join(agents_dir, 'llm_client.py')
+# 将 agents 目录加入 Python 路径
+agents_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agents')
+if agents_dir not in sys.path:
+    sys.path.insert(0, agents_dir)
 
-# 加载 agents.config 模块
-config_spec = importlib.util.spec_from_file_location("agents_config", os.path.join(agents_dir, "config.py"))
-agents_config = importlib.util.module_from_spec(config_spec)
-sys.modules["agents_config"] = agents_config
-config_spec.loader.exec_module(agents_config)
+# 导入 agents 模块
+from agents.llm_client import get_llm_client
 
-# 加载 agents.llm_client 模块
-llm_spec = importlib.util.spec_from_file_location("agents_llm_client", llm_client_path)
-llm_module = importlib.util.module_from_spec(llm_spec)
-sys.modules["agents_llm_client"] = llm_module
-
-# 在 llm_client 模块执行前，替换其导入的 config
-original_config = sys.modules.get('config')
-sys.modules['config'] = agents_config
-
-try:
-    llm_spec.loader.exec_module(llm_module)
-finally:
-    # 恢复 config 模块
-    if original_config:
-        sys.modules['config'] = original_config
-    else:
-        del sys.modules['config']
-
-get_llm_client = llm_module.get_llm_client
+# 从配置获取模型名称
+AGENTS_MODEL_NAME = llm_config.model_name
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -99,7 +79,7 @@ def non_stream_chat_completion(messages, temperature, max_tokens):
         'id': f'chatcmpl-{int(time.time() * 1000)}',
         'object': 'chat.completion',
         'created': int(time.time()),
-        'model': Config.OPENAI_MODEL,
+        'model': AGENTS_MODEL_NAME,
         'choices': [
             {
                 'index': 0,
@@ -130,7 +110,7 @@ def stream_chat_completion(messages, temperature, max_tokens):
             'id': f'chatcmpl-{int(time.time() * 1000)}',
             'object': 'chat.completion.chunk',
             'created': int(time.time()),
-            'model': Config.OPENAI_MODEL,
+            'model': AGENTS_MODEL_NAME,
             'choices': [
                 {
                     'index': 0,
@@ -151,7 +131,7 @@ def stream_chat_completion(messages, temperature, max_tokens):
                     'id': f'chatcmpl-{int(time.time() * 1000)}',
                     'object': 'chat.completion.chunk',
                     'created': int(time.time()),
-                    'model': Config.OPENAI_MODEL,
+                    'model': AGENTS_MODEL_NAME,
                     'choices': [
                         {
                             'index': 0,
@@ -167,7 +147,7 @@ def stream_chat_completion(messages, temperature, max_tokens):
             'id': f'chatcmpl-{int(time.time() * 1000)}',
             'object': 'chat.completion.chunk',
             'created': int(time.time()),
-            'model': Config.OPENAI_MODEL,
+            'model': AGENTS_MODEL_NAME,
             'choices': [
                 {
                     'index': 0,
@@ -198,7 +178,7 @@ def list_models():
             'object': 'list',
             'data': [
                 {
-                    'id': Config.OPENAI_MODEL,
+                    'id': AGENTS_MODEL_NAME,
                     'object': 'model',
                     'created': int(time.time()),
                     'owned_by': 'llama.cpp'
@@ -251,7 +231,7 @@ def completions():
                             'id': f'cmpl-{int(time.time() * 1000)}',
                             'object': 'text_completion',
                             'created': int(time.time()),
-                            'model': Config.OPENAI_MODEL,
+                            'model': AGENTS_MODEL_NAME,
                             'choices': [
                                 {
                                     'text': content,
@@ -278,7 +258,7 @@ def completions():
                 'id': f'cmpl-{int(time.time() * 1000)}',
                 'object': 'text_completion',
                 'created': int(time.time()),
-                'model': Config.OPENAI_MODEL,
+                'model': AGENTS_MODEL_NAME,
                 'choices': [
                     {
                         'text': content,

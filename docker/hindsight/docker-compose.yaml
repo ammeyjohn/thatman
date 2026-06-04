@@ -11,8 +11,11 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       HINDSIGHT_API_LLM_PROVIDER: openai
-      HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
+      # HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
+      HINDSIGHT_API_LLM_BASE_URL: http://128.1.1.48:7778/v1
       HINDSIGHT_API_LLM_API_KEY: dummy
       HF_ENDPOINT: https://hf-mirror.com
+      HINDSIGHT_EMBED_PROVIDER: huggingface
+      HINDSIGHT_EMBED_MODEL_NAME: Qwen/Qwen3-Embedding-0.6B
     volumes:
-      - ${HOME}/.hindsight-docker:/home/hindsight/.pg0
+      - ./data:/home/hindsight/.pg0

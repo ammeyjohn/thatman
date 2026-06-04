@@ -1,0 +1,13 @@
+services:
+  mongodb:
+    image: mongodb/mongodb-community-server:8.0.23-ubuntu2204
+    container_name: mongodb8
+    restart: always
+    privileged: true
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root123456
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo_data:/data/db
