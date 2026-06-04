@@ -22,8 +22,11 @@ Hindsight 服务需要单独启动：
         ghcr.io/vectorize-io/hindsight:latest
 """
 import os
+import asyncio
+import threading
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 from langchain.memory import ConversationBufferWindowMemory
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -34,6 +37,24 @@ try:
     HINDSIGHT_AVAILABLE = True
 except ImportError:
     HINDSIGHT_AVAILABLE = False
+
+
+# 全局线程池用于执行异步操作
+_hindsight_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hindsight_")
+
+
+def run_async_in_thread(coro):
+    """在新线程中运行异步协程"""
+    def run_in_new_loop():
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            return new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+    
+    future = _hindsight_executor.submit(run_in_new_loop)
+    return future.result(timeout=30)
 
 
 class HindsightMemoryStore:
@@ -97,6 +118,20 @@ class HindsightMemoryStore:
             memory_key="history",
         )
     
+    def _run_async(self, coro):
+        """在同步环境中运行异步协程"""
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # 在已有事件循环中，使用线程池执行
+                return run_async_in_thread(coro)
+        except RuntimeError:
+            # 没有运行的事件循环，直接运行
+            pass
+        
+        # 创建新的事件循环运行协程
+        return asyncio.run(coro)
+    
     def _ensure_bank(
         self,
         name: str,
@@ -104,26 +139,26 @@ class HindsightMemoryStore:
         disposition: Optional[Dict[str, int]] = None,
     ):
         """确保 memory bank 存在"""
-        try:
-            # 尝试创建 bank（如果已存在会返回已有 bank）
-            self.client.create_bank(
-                bank_id=self.bank_id,
-                name=name,
-                mission=mission or "AI assistant memory bank",
-                disposition=disposition or {
-                    "skepticism": 3,
-                    "literalism": 2,
-                    "empathy": 4,
-                },
-            )
-            print(f"\033[32m[INFO] Memory bank '{self.bank_id}' 已创建/确认\033[0m")
-        except Exception as e:
-            # Bank 可能已存在，或者是服务暂时不可用
-            error_msg = str(e)
-            if len(error_msg) > 150:
-                error_msg = error_msg[:150] + "..."
-            print(f"\033[33m[WARN] Bank '{self.bank_id}' 创建/确认失败: {error_msg}\033[0m")
-            # 不抛出异常，允许继续使用（后续操作可能会失败，但至少可以初始化）
+        async def _ensure():
+            try:
+                await self.client.create_bank(
+                    bank_id=self.bank_id,
+                    name=name,
+                    mission=mission or "AI assistant memory bank",
+                    disposition=disposition or {
+                        "skepticism": 3,
+                        "literalism": 2,
+                        "empathy": 4,
+                    },
+                )
+                print(f"\033[32m[INFO] Memory bank '{self.bank_id}' 已创建/确认\033[0m")
+            except Exception as e:
+                error_msg = str(e)
+                if len(error_msg) > 150:
+                    error_msg = error_msg[:150] + "..."
+                print(f"\033[33m[WARN] Bank '{self.bank_id}' 创建/确认失败: {error_msg}\033[0m")
+        
+        self._run_async(_ensure())
     
     def retain(
         self,
@@ -141,22 +176,24 @@ class HindsightMemoryStore:
             metadata: 元数据
             document_id: 文档 ID（用于关联相关记忆）
         """
-        try:
-            self.client.retain(
-                bank_id=self.bank_id,
-                content=content,
-                context=context or "conversation",
-                metadata=metadata or {},
-                document_id=document_id,
-            )
-            return True
-        except Exception as e:
-            error_msg = str(e)
-            # 简化错误信息，避免打印过多内容
-            if len(error_msg) > 200:
-                error_msg = error_msg[:200] + "..."
-            print(f"\033[33m[WARN] Hindsight retain 失败 ({self.bank_id}): {error_msg}\033[0m")
-            return False
+        async def _retain():
+            try:
+                await self.client.retain(
+                    bank_id=self.bank_id,
+                    content=content,
+                    context=context or "conversation",
+                    metadata=metadata or {},
+                    document_id=document_id,
+                )
+                return True
+            except Exception as e:
+                error_msg = str(e)
+                if len(error_msg) > 200:
+                    error_msg = error_msg[:200] + "..."
+                print(f"\033[33m[WARN] Hindsight retain 失败 ({self.bank_id}): {error_msg}\033[0m")
+                return False
+        
+        return self._run_async(_retain())
     
     def retain_conversation(
         self,
@@ -204,29 +241,32 @@ class HindsightMemoryStore:
         Returns:
             记忆列表，每项包含 text, type, entities, context 等
         """
-        try:
-            result = self.client.recall(
-                bank_id=self.bank_id,
-                query=query,
-                types=types,
-                budget=budget,
-                max_tokens=max_tokens,
-            )
-            
-            memories = []
-            for r in result.results:
-                memories.append({
-                    "id": getattr(r, "id", ""),
-                    "text": getattr(r, "text", ""),
-                    "type": getattr(r, "type", ""),
-                    "context": getattr(r, "context", ""),
-                    "entities": getattr(r, "entities", []),
-                    "mentioned_at": getattr(r, "mentioned_at", ""),
-                })
-            return memories
-        except Exception as e:
-            print(f"\033[33m[WARN] Hindsight recall 失败: {e}\033[0m")
-            return []
+        async def _recall():
+            try:
+                result = await self.client.recall(
+                    bank_id=self.bank_id,
+                    query=query,
+                    types=types,
+                    budget=budget,
+                    max_tokens=max_tokens,
+                )
+                
+                memories = []
+                for r in result.results:
+                    memories.append({
+                        "id": getattr(r, "id", ""),
+                        "text": getattr(r, "text", ""),
+                        "type": getattr(r, "type", ""),
+                        "context": getattr(r, "context", ""),
+                        "entities": getattr(r, "entities", []),
+                        "mentioned_at": getattr(r, "mentioned_at", ""),
+                    })
+                return memories
+            except Exception as e:
+                print(f"\033[33m[WARN] Hindsight recall 失败: {e}\033[0m")
+                return []
+        
+        return self._run_async(_recall())
     
     def reflect(self, query: str, budget: str = "mid", context: Optional[str] = None) -> Optional[str]:
         """
@@ -240,17 +280,20 @@ class HindsightMemoryStore:
         Returns:
             生成的回复文本
         """
-        try:
-            answer = self.client.reflect(
-                bank_id=self.bank_id,
-                query=query,
-                budget=budget,
-                context=context or "",
-            )
-            return answer.text
-        except Exception as e:
-            print(f"\033[33m[WARN] Hindsight reflect 失败: {e}\033[0m")
-            return None
+        async def _reflect():
+            try:
+                answer = await self.client.reflect(
+                    bank_id=self.bank_id,
+                    query=query,
+                    budget=budget,
+                    context=context or "",
+                )
+                return answer.text
+            except Exception as e:
+                print(f"\033[33m[WARN] Hindsight reflect 失败: {e}\033[0m")
+                return None
+        
+        return self._run_async(_reflect())
     
     def get_short_term_history(self) -> List[Dict[str, str]]:
         """获取短期对话历史"""
@@ -306,26 +349,29 @@ class HindsightMemoryStore:
     
     def list_memories(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """列出 hindsight 中的所有记忆"""
-        try:
-            result = self.client.list_memories(
-                bank_id=self.bank_id,
-                limit=limit,
-                offset=offset,
-            )
-            return {
-                "total": getattr(result, "total", 0),
-                "items": [
-                    {
-                        "text": getattr(item, "text", ""),
-                        "type": getattr(item, "type", ""),
-                        "context": getattr(item, "context", ""),
-                    }
-                    for item in getattr(result, "items", [])
-                ],
-            }
-        except Exception as e:
-            print(f"\033[33m[WARN] Hindsight list_memories 失败: {e}\033[0m")
-            return {"total": 0, "items": []}
+        async def _list():
+            try:
+                result = await self.client.list_memories(
+                    bank_id=self.bank_id,
+                    limit=limit,
+                    offset=offset,
+                )
+                return {
+                    "total": getattr(result, "total", 0),
+                    "items": [
+                        {
+                            "text": getattr(item, "text", ""),
+                            "type": getattr(item, "type", ""),
+                            "context": getattr(item, "context", ""),
+                        }
+                        for item in getattr(result, "items", [])
+                    ],
+                }
+            except Exception as e:
+                print(f"\033[33m[WARN] Hindsight list_memories 失败: {e}\033[0m")
+                return {"total": 0, "items": []}
+        
+        return self._run_async(_list())
     
     def get_stats(self) -> Dict[str, Any]:
         """获取 hindsight 记忆统计"""
@@ -349,19 +395,22 @@ class HindsightMemoryStore:
     
     def clear_bank(self):
         """清空 hindsight bank（删除并重建）"""
-        try:
-            # 删除 bank
-            self.client.delete_bank(bank_id=self.bank_id)
-            # 重建
-            self._ensure_bank(self.bank_id)
-            print(f"\033[32m[INFO] Hindsight bank '{self.bank_id}' 已清空\033[0m")
-        except Exception as e:
-            print(f"\033[33m[WARN] 清空 bank 失败: {e}\033[0m")
+        async def _clear():
+            try:
+                await self.client.delete_bank(bank_id=self.bank_id)
+                print(f"\033[32m[INFO] Hindsight bank '{self.bank_id}' 已清空\033[0m")
+            except Exception as e:
+                print(f"\033[33m[WARN] 清空 bank 失败: {e}\033[0m")
+        
+        self._run_async(_clear())
     
     def close(self):
         """关闭 hindsight client"""
-        if hasattr(self.client, "close"):
-            self.client.close()
+        async def _close():
+            if hasattr(self.client, "close"):
+                await self.client.close()
+        
+        self._run_async(_close())
 
 
 # 向后兼容的别名

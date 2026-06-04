@@ -4,6 +4,7 @@ import sys
 import os
 import traceback
 import threading
+from typing import Dict
 from flask import Blueprint, request, Response, stream_with_context
 
 # 导入 server 的配置
@@ -14,13 +15,16 @@ agents_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agents')
 if agents_dir not in sys.path:
     sys.path.insert(0, agents_dir)
 
-# 导入 agents 模块
-from agents.llm_client import get_llm_client
+# 导入 GameMaster
+from game_master import create_game_master, GameMaster
 
 # 从配置获取模型名称
 AGENTS_MODEL_NAME = llm_config.model_name
 
 chat_bp = Blueprint('chat', __name__)
+
+# 用户 GameMaster 实例缓存
+user_gm_instances: Dict[str, GameMaster] = {}
 
 
 def log_error(context: str, error: Exception):
@@ -30,9 +34,17 @@ def log_error(context: str, error: Exception):
     print(f"\033[31m  Error: {str(error)}\033[0m")
     print(f"\033[90m{stack_trace}\033[0m")
 
-# 初始化 LLM 客户端
-llm_client = get_llm_client(streaming=False)
-llm_client_stream = get_llm_client(streaming=True)
+
+def get_user_gm(user_id: str) -> GameMaster:
+    """获取或创建用户的 GameMaster 实例"""
+    if user_id not in user_gm_instances:
+        user_gm_instances[user_id] = create_game_master(
+            player_id=user_id,
+            player_name=f"修士{user_id[:8]}",
+            enable_memory=True,
+        )
+        print(f"\033[32m[INFO] 为用户 {user_id} 创建新的 GameMaster 实例\033[0m")
+    return user_gm_instances[user_id]
 
 
 @chat_bp.route('/chat/completions', methods=['POST'])
@@ -82,51 +94,44 @@ def chat_completions():
         }, 500
 
 
-def _save_memory_async(user_llm_client, last_user_msg, content, user_id):
-    """异步保存记忆到 hindsight"""
-    try:
-        if user_llm_client.memory:
-            user_llm_client.memory.retain(
-                content=f"用户: {last_user_msg}\nAI: {content}",
-                context="conversation"
-            )
-    except Exception as mem_e:
-        print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
-
-
 def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous'):
-    """非流式聊天完成"""
+    """非流式聊天完成 - 使用 GameMaster"""
     try:
-        kwargs = {'temperature': temperature}
-        if max_tokens is not None:
-            kwargs['max_tokens'] = max_tokens
-
         print(f"\033[36m[INFO] 非流式请求 - user_id: {user_id}, messages: {len(messages)}\033[0m")
 
-        # 根据用户ID获取对应的LLM客户端（带独立记忆）
-        from agents.llm_client import get_llm_client_with_memory
-        user_llm_client = get_llm_client_with_memory(
-            bank_id=f"user-{user_id}",
-            streaming=False
-        )
+        # 获取用户的 GameMaster 实例
+        gm = get_user_gm(user_id)
 
-        # 调用聊天（会自动从用户记忆库和世界记忆库获取记忆）
-        content = user_llm_client.chat(messages, **kwargs)
-
-        # 保存对话到用户记忆库（异步执行，不阻塞响应）
-        last_user_msg = None
+        # 提取最后一条用户消息
+        last_user_msg = ""
         for msg in reversed(messages):
             if msg.get('role') == 'user':
                 last_user_msg = msg.get('content', '')
                 break
-        if last_user_msg and user_llm_client.memory:
-            # 使用独立线程保存记忆，不阻塞 API 响应
-            memory_thread = threading.Thread(
-                target=_save_memory_async,
-                args=(user_llm_client, last_user_msg, content, user_id),
-                daemon=True
-            )
-            memory_thread.start()
+
+        if not last_user_msg:
+            return {
+                'error': {
+                    'message': '没有找到用户消息',
+                    'type': 'invalid_request_error',
+                    'code': 'missing_user_message'
+                }
+            }, 400
+
+        # 使用 GameMaster 处理用户输入
+        gm_response = gm.process(last_user_msg)
+
+        # 解析响应内容
+        if gm_response.is_json:
+            try:
+                response_data = json.loads(gm_response.content)
+                # 优先使用 narrative 字段作为展示内容
+                content = response_data.get('narrative', gm_response.content)
+            except json.JSONDecodeError:
+                content = gm_response.content
+        else:
+            content = gm_response.content
+
     except Exception as e:
         log_error(f"non_stream_chat_completion (user: {user_id})", e)
         raise
@@ -148,7 +153,7 @@ def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anony
             }
         ],
         'usage': {
-            'prompt_tokens': -1,  # LangChain 不直接返回 token 数
+            'prompt_tokens': -1,
             'completion_tokens': -1,
             'total_tokens': -1
         }
@@ -156,26 +161,45 @@ def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anony
 
 
 def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous'):
-    """流式聊天完成"""
+    """流式聊天完成 - 使用 GameMaster"""
     try:
-        kwargs = {'temperature': temperature}
-        if max_tokens is not None:
-            kwargs['max_tokens'] = max_tokens
-
         print(f"\033[36m[INFO] 流式请求 - user_id: {user_id}, messages: {len(messages)}\033[0m")
 
-        # 根据用户ID获取对应的流式LLM客户端（带独立记忆）
-        from agents.llm_client import get_llm_client_with_memory
-        user_llm_client = get_llm_client_with_memory(
-            bank_id=f"user-{user_id}",
-            streaming=True
-        )
+        # 获取用户的 GameMaster 实例
+        gm = get_user_gm(user_id)
+
+        # 提取最后一条用户消息
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if msg.get('role') == 'user':
+                last_user_msg = msg.get('content', '')
+                break
+
+        if not last_user_msg:
+            return Response(
+                f'data: {json.dumps({"error": "没有找到用户消息"})}\n\ndata: [DONE]\n\n',
+                mimetype='text/event-stream'
+            )
+
     except Exception as e:
         log_error(f"stream_chat_completion 初始化失败 (user: {user_id})", e)
         raise
 
     def generate():
         try:
+            # 使用 GameMaster 处理用户输入
+            gm_response = gm.process(last_user_msg)
+
+            # 解析响应内容
+            if gm_response.is_json:
+                try:
+                    response_data = json.loads(gm_response.content)
+                    full_content = response_data.get('narrative', gm_response.content)
+                except json.JSONDecodeError:
+                    full_content = gm_response.content
+            else:
+                full_content = gm_response.content
+
             # 发送起始事件
             start_data = {
                 'id': f'chatcmpl-{int(time.time() * 1000)}',
@@ -192,26 +216,24 @@ def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous
             }
             yield f'data: {json.dumps(start_data)}\n\n'
 
-            # 使用流式客户端获取响应
-            full_content = ''
-            for chunk in user_llm_client.stream_chat(messages):
-                if hasattr(chunk, 'content') and chunk.content:
-                    content = chunk.content
-                    full_content += content
-                    data = {
-                        'id': f'chatcmpl-{int(time.time() * 1000)}',
-                        'object': 'chat.completion.chunk',
-                        'created': int(time.time()),
-                        'model': AGENTS_MODEL_NAME,
-                        'choices': [
-                            {
-                                'index': 0,
-                                'delta': {'content': content},
-                                'finish_reason': None
-                            }
-                        ]
-                    }
-                    yield f'data: {json.dumps(data)}\n\n'
+            # 模拟流式输出 - 将内容分块发送
+            chunk_size = 4  # 每块字符数
+            for i in range(0, len(full_content), chunk_size):
+                chunk = full_content[i:i+chunk_size]
+                data = {
+                    'id': f'chatcmpl-{int(time.time() * 1000)}',
+                    'object': 'chat.completion.chunk',
+                    'created': int(time.time()),
+                    'model': AGENTS_MODEL_NAME,
+                    'choices': [
+                        {
+                            'index': 0,
+                            'delta': {'content': chunk},
+                            'finish_reason': None
+                        }
+                    ]
+                }
+                yield f'data: {json.dumps(data)}\n\n'
 
             # 发送结束事件
             end_data = {
@@ -230,21 +252,6 @@ def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous
             yield f'data: {json.dumps(end_data)}\n\n'
             yield 'data: [DONE]\n\n'
 
-            # 流式响应结束后，异步保存完整对话到用户记忆库
-            if full_content and messages:
-                last_user_msg = None
-                for msg in reversed(messages):
-                    if msg.get('role') == 'user':
-                        last_user_msg = msg.get('content', '')
-                        break
-                if last_user_msg and user_llm_client.memory:
-                    # 使用独立线程保存记忆，不阻塞响应
-                    memory_thread = threading.Thread(
-                        target=_save_memory_async,
-                        args=(user_llm_client, last_user_msg, full_content, user_id),
-                        daemon=True
-                    )
-                    memory_thread.start()
         except Exception as e:
             log_error(f"stream generate (user: {user_id})", e)
             # 发送错误事件到客户端
@@ -291,7 +298,7 @@ def list_models():
             ]
         }
     except Exception as e:
-        log_error("completions", e)
+        log_error("list_models", e)
         return {
             'error': {
                 'message': str(e),
@@ -301,7 +308,7 @@ def list_models():
         }, 500
 
 
-@chat_bp.route('/embeddings', methods=['POST'])
+@chat_bp.route('/completions', methods=['POST'])
 def completions():
     """llama.cpp 旧版 completion 接口（非 chat 格式）"""
     data = request.get_json()
@@ -320,34 +327,47 @@ def completions():
     temperature = data.get('temperature', 0.7)
     max_tokens = data.get('max_tokens', 512)
 
-    # 将 prompt 转换为 messages 格式
-    messages = [{'role': 'user', 'content': prompt}]
+    # 从请求头获取用户ID
+    user_id = request.headers.get('X-User-Id', 'anonymous')
 
     try:
-        kwargs = {'temperature': temperature, 'max_tokens': max_tokens}
+        # 获取用户的 GameMaster 实例
+        gm = get_user_gm(user_id)
+
+        # 使用 GameMaster 处理
+        gm_response = gm.process(prompt)
+
+        # 解析响应内容
+        if gm_response.is_json:
+            try:
+                response_data = json.loads(gm_response.content)
+                content = response_data.get('narrative', gm_response.content)
+            except json.JSONDecodeError:
+                content = gm_response.content
+        else:
+            content = gm_response.content
 
         if stream:
             def generate():
-                full_content = ''
-                for chunk in llm_client_stream.stream_chat(messages):
-                    if hasattr(chunk, 'content') and chunk.content:
-                        content = chunk.content
-                        full_content += content
-                        data = {
-                            'id': f'cmpl-{int(time.time() * 1000)}',
-                            'object': 'text_completion',
-                            'created': int(time.time()),
-                            'model': AGENTS_MODEL_NAME,
-                            'choices': [
-                                {
-                                    'text': content,
-                                    'index': 0,
-                                    'logprobs': None,
-                                    'finish_reason': None
-                                }
-                            ]
-                        }
-                        yield f'data: {json.dumps(data)}\n\n'
+                # 模拟流式输出
+                chunk_size = 4
+                for i in range(0, len(content), chunk_size):
+                    chunk = content[i:i+chunk_size]
+                    data = {
+                        'id': f'cmpl-{int(time.time() * 1000)}',
+                        'object': 'text_completion',
+                        'created': int(time.time()),
+                        'model': AGENTS_MODEL_NAME,
+                        'choices': [
+                            {
+                                'text': chunk,
+                                'index': 0,
+                                'logprobs': None,
+                                'finish_reason': None
+                            }
+                        ]
+                    }
+                    yield f'data: {json.dumps(data)}\n\n'
                 yield 'data: [DONE]\n\n'
 
             return Response(
@@ -359,7 +379,6 @@ def completions():
                 }
             )
         else:
-            content = llm_client.chat(messages, **kwargs)
             return {
                 'id': f'cmpl-{int(time.time() * 1000)}',
                 'object': 'text_completion',
@@ -381,7 +400,7 @@ def completions():
             }
 
     except Exception as e:
-        log_error("list_models", e)
+        log_error("completions", e)
         return {
             'error': {
                 'message': str(e),
@@ -429,10 +448,9 @@ def detokenize():
             }
         }, 400
 
-    # 由于使用 LangChain 客户端，无法直接 detokenize
-    # 返回提示信息
+    # 由于使用 GameMaster，无法直接 detokenize
     return {
-        'content': '[Detokenize not supported with LangChain client]'
+        'content': '[Detokenize not supported with GameMaster]'
     }
 
 
@@ -450,10 +468,10 @@ def embeddings():
             }
         }, 400
 
-    # 当前 llm_client 不支持 embeddings
+    # 当前 GameMaster 不支持 embeddings
     return {
         'error': {
-            'message': 'Embeddings not supported with current LangChain client implementation',
+            'message': 'Embeddings not supported with GameMaster',
             'type': 'not_implemented_error',
             'code': 'not_implemented'
         }
