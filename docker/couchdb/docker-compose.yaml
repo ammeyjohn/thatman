@@ -1,0 +1,17 @@
+services:
+  couchdb:
+    image: couchdb:3.5
+    container_name: couchdb
+    restart: always
+    # Mac挂载数据目录，适配macOS文件权限
+    volumes:
+      - ./data:/opt/couchdb/data
+      - ./config:/opt/couchdb/etc/local.d
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=Admin@123456
+      # 开启所有网络访问，Fauxton(WebUI)默认内嵌无需额外镜像
+      - COUCHDB_SECURE_COOKIES=false
+    ports:
+      - "5984:5984"   # API端口
+      - "5986:5986"   # 集群管理端口
