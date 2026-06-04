@@ -6,6 +6,17 @@ import { Copy, Pencil, Trash2, RefreshCw, Check } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { ConfirmDialog } from './ConfirmDialog';
 
+// 处理纯文本换行：将换行符转换为 <br />
+const formatTextWithLineBreaks = (text: string): string => {
+  // 如果文本包含 Markdown 语法，直接返回
+  const markdownPatterns = /[#*`_~[\]!]|\n\n|^- /m;
+  if (markdownPatterns.test(text)) {
+    return text;
+  }
+  // 纯文本：将单个换行符转为 <br />
+  return text.replace(/\n/g, '  \n');
+};
+
 interface ChatMessageProps {
   message: ChatMessageType;
   onOptionClick?: (option: string) => void;
@@ -197,14 +208,19 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   onKeyDown={handleEditKeyDown}
-                  className="w-full min-w-[200px] bg-transparent text-[#e8e4dc] text-sm resize-none outline-none border-0 focus:ring-0"
+                  className="w-full min-w-[200px] bg-transparent text-[#e8e4dc] text-sm resize-none outline-none border-0 focus:ring-0 whitespace-pre-wrap"
                   rows={3}
                   autoFocus
                 />
               ) : (
                 <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {message.content}
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                    }}
+                  >
+                    {formatTextWithLineBreaks(message.content)}
                   </ReactMarkdown>
                 </div>
               )}

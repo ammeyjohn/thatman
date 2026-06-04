@@ -3,6 +3,7 @@ import time
 import sys
 import os
 import traceback
+import threading
 from flask import Blueprint, request, Response, stream_with_context
 
 # 导入 server 的配置
@@ -81,6 +82,18 @@ def chat_completions():
         }, 500
 
 
+def _save_memory_async(user_llm_client, last_user_msg, content, user_id):
+    """异步保存记忆到 hindsight"""
+    try:
+        if user_llm_client.memory:
+            user_llm_client.memory.retain(
+                content=f"用户: {last_user_msg}\nAI: {content}",
+                context="conversation"
+            )
+    except Exception as mem_e:
+        print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
+
+
 def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous'):
     """非流式聊天完成"""
     try:
@@ -100,21 +113,20 @@ def non_stream_chat_completion(messages, temperature, max_tokens, user_id='anony
         # 调用聊天（会自动从用户记忆库和世界记忆库获取记忆）
         content = user_llm_client.chat(messages, **kwargs)
 
-        # 保存对话到用户记忆库（不保存到世界记忆库）
+        # 保存对话到用户记忆库（异步执行，不阻塞响应）
         last_user_msg = None
         for msg in reversed(messages):
             if msg.get('role') == 'user':
                 last_user_msg = msg.get('content', '')
                 break
         if last_user_msg and user_llm_client.memory:
-            try:
-                user_llm_client.memory.retain(
-                    content=f"用户: {last_user_msg}\nAI: {content}",
-                    context="conversation"
-                )
-            except Exception as mem_e:
-                # 记忆存储失败不影响主流程，只记录日志
-                print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
+            # 使用独立线程保存记忆，不阻塞 API 响应
+            memory_thread = threading.Thread(
+                target=_save_memory_async,
+                args=(user_llm_client, last_user_msg, content, user_id),
+                daemon=True
+            )
+            memory_thread.start()
     except Exception as e:
         log_error(f"non_stream_chat_completion (user: {user_id})", e)
         raise
@@ -218,7 +230,7 @@ def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous
             yield f'data: {json.dumps(end_data)}\n\n'
             yield 'data: [DONE]\n\n'
 
-            # 流式响应结束后，保存完整对话到用户记忆库
+            # 流式响应结束后，异步保存完整对话到用户记忆库
             if full_content and messages:
                 last_user_msg = None
                 for msg in reversed(messages):
@@ -226,14 +238,13 @@ def stream_chat_completion(messages, temperature, max_tokens, user_id='anonymous
                         last_user_msg = msg.get('content', '')
                         break
                 if last_user_msg and user_llm_client.memory:
-                    try:
-                        user_llm_client.memory.retain(
-                            content=f"用户: {last_user_msg}\nAI: {full_content}",
-                            context="conversation"
-                        )
-                    except Exception as mem_e:
-                        # 记忆存储失败不影响流式响应，只记录日志
-                        print(f"\033[33m[WARN] 记忆存储失败 (user: {user_id}): {mem_e}\033[0m")
+                    # 使用独立线程保存记忆，不阻塞响应
+                    memory_thread = threading.Thread(
+                        target=_save_memory_async,
+                        args=(user_llm_client, last_user_msg, full_content, user_id),
+                        daemon=True
+                    )
+                    memory_thread.start()
         except Exception as e:
             log_error(f"stream generate (user: {user_id})", e)
             # 发送错误事件到客户端
