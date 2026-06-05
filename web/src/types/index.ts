@@ -48,6 +48,8 @@ export interface ChatMessage {
   timestamp: number;
   type: 'normal' | 'event' | 'system';
   options?: string[];
+  actions?: string[];
+  parsedJSON?: Record<string, unknown>;
 }
 
 // 游戏响应JSON结构

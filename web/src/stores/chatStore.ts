@@ -29,6 +29,8 @@ interface ChatState {
   addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
   updateLastMessage: (content: string) => void;
   updateLastMessageOptions: (options: string[]) => void;
+  updateLastMessageActions: (actions: string[]) => void;
+  updateLastMessageParsedJSON: (parsedJSON: Record<string, unknown>) => void;
   setInputValue: (value: string) => void;
   setStreamingContent: (content: string) => void;
   clearMessages: () => void;
@@ -95,6 +97,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages };
     }),
 
+  updateLastMessageActions: (actions) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        lastMessage.actions = actions;
+      }
+      return { messages };
+    }),
+
+  updateLastMessageParsedJSON: (parsedJSON) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        lastMessage.parsedJSON = parsedJSON;
+      }
+      return { messages };
+    }),
+
   setInputValue: (value) => set({ inputValue: value }),
 
   setStreamingContent: (content) => set({ streamingContent: content }),
@@ -130,7 +152,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   regenerateMessage: async (messageId: string) => {
-    const { messages, addMessage, updateLastMessage, resetStreamStats, deleteMessage } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, resetStreamStats, deleteMessage } = get();
 
     // 找到要重新生成的消息
     const messageIndex = messages.findIndex((m) => m.id === messageId);
@@ -174,6 +196,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const startTime = Date.now();
     let outputTokens = 0;
+    let rawContent = '';
+    let lastParsedMessage = '';
+    let hasParsedJSON = false;
 
     try {
       // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
@@ -243,6 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
                 outputTokens += 1;
+                rawContent += delta;
 
                 const elapsedSeconds = (Date.now() - startTime) / 1000;
                 const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
@@ -255,16 +281,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   },
                 }));
 
-                // 直接追加显示收到的内容
-                const currentContent = get().streamingContent;
-                const newContent = currentContent + delta;
-                updateLastMessage(newContent);
-                set({ streamingContent: newContent });
-
-                // 尝试解析完整 JSON，提取 location 和 time
+                // 尝试解析 JSON，提取 message 字段进行流式展示
+                let displayContent = rawContent;
                 try {
-                  const jsonData = JSON.parse(newContent);
+                  const jsonData = JSON.parse(rawContent);
                   if (jsonData && typeof jsonData === 'object') {
+                    hasParsedJSON = true;
+                    // 提取 message 字段用于流式展示
+                    if (typeof jsonData.message === 'string') {
+                      displayContent = jsonData.message;
+                      lastParsedMessage = jsonData.message;
+                    }
+                    // 提取 actions 字段
+                    if (Array.isArray(jsonData.actions)) {
+                      const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
+                      updateLastMessageActions(actions);
+                    }
+                    // 保存完整解析的 JSON
+                    updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
+                    // 提取 location 和 time
                     const updates: Partial<ChatState> = {};
                     if (typeof jsonData.location === 'string') {
                       updates.lastLocation = jsonData.location;
@@ -277,8 +312,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                   }
                 } catch {
-                  // 流式过程中 JSON 可能不完整，忽略解析错误
+                  // JSON 尚未完整，如果之前解析过 message，则继续展示上次解析的 message
+                  if (hasParsedJSON && lastParsedMessage) {
+                    displayContent = lastParsedMessage;
+                  }
                 }
+
+                updateLastMessage(displayContent);
+                set({ streamingContent: rawContent });
               }
             } catch {
               // 忽略解析错误的行
@@ -309,7 +350,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string) => {
-    const { messages, addMessage, updateLastMessage, resetStreamStats } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, resetStreamStats } = get();
 
     // 添加用户消息
     addMessage({
@@ -350,6 +391,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const startTime = Date.now();
     let outputTokens = 0;
+    let rawContent = '';
+    let lastParsedMessage = '';
+    let hasParsedJSON = false;
 
     try {
       // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
@@ -414,6 +458,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
                 outputTokens += 1;
+                rawContent += delta;
 
                 // 计算生成速度
                 const elapsedSeconds = (Date.now() - startTime) / 1000;
@@ -428,16 +473,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   },
                 }));
 
-                // 直接追加显示收到的内容
-                const currentContent = get().streamingContent;
-                const newContent = currentContent + delta;
-                updateLastMessage(newContent);
-                set({ streamingContent: newContent });
-
-                // 尝试解析完整 JSON，提取 location 和 time
+                // 尝试解析 JSON，提取 message 字段进行流式展示
+                let displayContent = rawContent;
                 try {
-                  const jsonData = JSON.parse(newContent);
+                  const jsonData = JSON.parse(rawContent);
                   if (jsonData && typeof jsonData === 'object') {
+                    hasParsedJSON = true;
+                    // 提取 message 字段用于流式展示
+                    if (typeof jsonData.message === 'string') {
+                      displayContent = jsonData.message;
+                      lastParsedMessage = jsonData.message;
+                    }
+                    // 提取 actions 字段
+                    if (Array.isArray(jsonData.actions)) {
+                      const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
+                      updateLastMessageActions(actions);
+                    }
+                    // 保存完整解析的 JSON
+                    updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
+                    // 提取 location 和 time
                     const updates: Partial<ChatState> = {};
                     if (typeof jsonData.location === 'string') {
                       updates.lastLocation = jsonData.location;
@@ -450,8 +504,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                   }
                 } catch {
-                  // 流式过程中 JSON 可能不完整，忽略解析错误
+                  // JSON 尚未完整，如果之前解析过 message，则继续展示上次解析的 message
+                  if (hasParsedJSON && lastParsedMessage) {
+                    displayContent = lastParsedMessage;
+                  }
                 }
+
+                updateLastMessage(displayContent);
+                set({ streamingContent: rawContent });
               }
             } catch {
               // 忽略解析错误的行
