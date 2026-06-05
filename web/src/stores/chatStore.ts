@@ -172,13 +172,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let outputTokens = 0;
 
     try {
-      // 构建消息历史
-      const chatMessages = previousMessages
+      // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
+      const historyMsg = previousMessages
         .filter((m) => m.sender !== 'system')
+        .slice(-20) // 最多 20 条消息（10 轮对话）
         .map((m) => ({
           role: m.sender === 'player' ? 'user' : 'assistant',
           content: m.content,
         }));
+
+      // 获取当前位置信息（从 gameStore 或默认值）
+      const currentLocation = '青云古域·云溪村'; // TODO: 可从 gameStore 获取
+
+      // 获取最后一条用户消息作为 input_text
+      const lastUserMessage = previousMessages
+        .filter((m) => m.sender === 'player')
+        .pop();
+      const inputText = lastUserMessage ? lastUserMessage.content : '';
 
       const response = await fetch(`${config.API_BASE_URL}/chat/completions`, {
         method: 'POST',
@@ -187,7 +197,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           'X-User-Id': getOrCreateUserId(),
         },
         body: JSON.stringify({
-          messages: chatMessages,
+          uid: getOrCreateUserId(),
+          input_text: inputText,
+          current_location: currentLocation,
+          req_type: 'chat',
+          history_msg: historyMsg,
           stream: true,
         }),
         signal: abortController.signal,
@@ -315,18 +329,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let outputTokens = 0;
 
     try {
-      // 构建消息历史，包含之前的对话记录
-      const chatMessages = messages
+      // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
+      const historyMsg = messages
         .filter((m) => m.sender !== 'system')
+        .slice(-20) // 最多 20 条消息（10 轮对话）
         .map((m) => ({
           role: m.sender === 'player' ? 'user' : 'assistant',
           content: m.content,
         }));
-      // 添加当前用户消息
-      chatMessages.push({
-        role: 'user',
-        content: content,
-      });
+
+      // 获取当前位置信息（从 gameStore 或默认值）
+      const currentLocation = '青云古域·云溪村'; // TODO: 可从 gameStore 获取
 
       const response = await fetch(`${config.API_BASE_URL}/chat/completions`, {
         method: 'POST',
@@ -335,7 +348,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           'X-User-Id': getOrCreateUserId(),
         },
         body: JSON.stringify({
-          messages: chatMessages,
+          uid: getOrCreateUserId(),
+          input_text: content,
+          current_location: currentLocation,
+          req_type: 'chat',
+          history_msg: historyMsg,
           stream: true,
         }),
         signal: abortController.signal,

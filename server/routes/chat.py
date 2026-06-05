@@ -39,6 +39,10 @@ def chat_completions():
     """
     聊天补全接口
     接收前端发送的聊天消息，调用大模型获取结果，支持流式和非流式响应
+
+    支持两种请求格式：
+    1. 新格式（推荐）: {"uid", "input_text", "current_location", "req_type", "history_msg", "stream"}
+    2. 旧格式（兼容）: {"messages", "stream", "temperature", "character_id"}
     """
     data = request.get_json()
 
@@ -51,24 +55,69 @@ def chat_completions():
             }
         }), 400
 
-    messages = data.get('messages', [])
-    stream = data.get('stream', False)
-    temperature = data.get('temperature', 0.7)
-    character_id = data.get('character_id')
-    # 从请求头中获取 X-User-Id 作为 user_id
-    user_id = request.headers.get('X-User-Id')
+    # 判断请求格式：新格式包含 input_text 字段
+    if 'input_text' in data:
+        # ===== 新格式处理 =====
+        uid = data.get('uid', '')
+        input_text = data.get('input_text', '')
+        current_location = data.get('current_location', '')
+        req_type = data.get('req_type', 'chat')
+        history_msg = data.get('history_msg', [])
+        stream = data.get('stream', False)
+        character_id = data.get('character_id')
 
-    debug_log(f"收到请求 - stream={stream}, temperature={temperature}, character_id={character_id}, user_id={user_id}")
-    debug_log(f"收到消息内容: {json.dumps(messages, ensure_ascii=False)}")
+        # 从请求头中获取 X-User-Id，如果 body 中有 uid 则优先使用 body 中的
+        user_id = data.get('uid') or request.headers.get('X-User-Id')
 
-    if not messages:
-        return jsonify({
-            'error': {
-                'message': 'messages 不能为空',
-                'type': 'invalid_request_error',
-                'code': 'invalid_request'
-            }
-        }), 400
+        debug_log(f"收到新格式请求 - stream={stream}, req_type={req_type}, user_id={user_id}, location={current_location}")
+        debug_log(f"input_text: {input_text}")
+        debug_log(f"history_msg: {json.dumps(history_msg, ensure_ascii=False)}")
+
+        if not input_text:
+            return jsonify({
+                'error': {
+                    'message': 'input_text 不能为空',
+                    'type': 'invalid_request_error',
+                    'code': 'invalid_request'
+                }
+            }), 400
+
+        # 将 history_msg + 当前 input_text 组合成 messages 格式
+        messages = list(history_msg) if history_msg else []
+        messages.append({
+            'role': 'user',
+            'content': input_text
+        })
+
+        # 如果有 current_location，在 system 消息中加入位置信息
+        if current_location:
+            # 在消息列表开头插入 location context（作为 system 消息或附加到 user 消息）
+            # 这里选择将位置信息附加到第一条 user 消息前作为 context
+            messages.insert(0, {
+                'role': 'system',
+                'content': f'玩家当前所在位置: {current_location}'
+            })
+
+    else:
+        # ===== 旧格式处理（兼容） =====
+        messages = data.get('messages', [])
+        stream = data.get('stream', False)
+        temperature = data.get('temperature', 0.7)
+        character_id = data.get('character_id')
+        # 从请求头中获取 X-User-Id 作为 user_id
+        user_id = request.headers.get('X-User-Id')
+
+        debug_log(f"收到旧格式请求 - stream={stream}, temperature={temperature}, character_id={character_id}, user_id={user_id}")
+        debug_log(f"收到消息内容: {json.dumps(messages, ensure_ascii=False)}")
+
+        if not messages:
+            return jsonify({
+                'error': {
+                    'message': 'messages 不能为空',
+                    'type': 'invalid_request_error',
+                    'code': 'invalid_request'
+                }
+            }), 400
 
     try:
         # 获取 chat agent（按 character_id 和 user_id 区分）
