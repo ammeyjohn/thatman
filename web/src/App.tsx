@@ -1,12 +1,36 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CharacterPanel } from './components/CharacterPanel';
 import { WorldEventPanel } from './components/WorldEventPanel';
 import { ChatArea } from './components/ChatArea';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
+const LEFT_COLLAPSED_KEY = 'thatman:leftCollapsed';
+const RIGHT_COLLAPSED_KEY = 'thatman:rightCollapsed';
+
+function getInitialCollapsed(key: string, defaultValue: boolean): boolean {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored !== null ? stored === 'true' : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
 function App() {
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(() =>
+    getInitialCollapsed(LEFT_COLLAPSED_KEY, false)
+  );
+  const [rightCollapsed, setRightCollapsed] = useState(() =>
+    getInitialCollapsed(RIGHT_COLLAPSED_KEY, false)
+  );
+
+  useEffect(() => {
+    localStorage.setItem(LEFT_COLLAPSED_KEY, String(leftCollapsed));
+  }, [leftCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem(RIGHT_COLLAPSED_KEY, String(rightCollapsed));
+  }, [rightCollapsed]);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#0a0a0f] flex">
