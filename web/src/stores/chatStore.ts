@@ -24,6 +24,8 @@ interface ChatState {
   streamingContent: string;
   streamStats: StreamStats;
   abortController: AbortController | null;
+  lastLocation: string | null;
+  lastTime: string | null;
   addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
   updateLastMessage: (content: string) => void;
   updateLastMessageOptions: (options: string[]) => void;
@@ -55,6 +57,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingContent: '',
   streamStats: { ...initialStreamStats },
   abortController: null,
+  lastLocation: null,
+  lastTime: null,
 
   addMessage: (message) => {
     const id = generateId();
@@ -256,6 +260,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 const newContent = currentContent + delta;
                 updateLastMessage(newContent);
                 set({ streamingContent: newContent });
+
+                // 尝试解析完整 JSON，提取 location 和 time
+                try {
+                  const jsonData = JSON.parse(newContent);
+                  if (jsonData && typeof jsonData === 'object') {
+                    const updates: Partial<ChatState> = {};
+                    if (typeof jsonData.location === 'string') {
+                      updates.lastLocation = jsonData.location;
+                    }
+                    if (typeof jsonData.time === 'string') {
+                      updates.lastTime = jsonData.time;
+                    }
+                    if (updates.lastLocation || updates.lastTime) {
+                      set(updates);
+                    }
+                  }
+                } catch {
+                  // 流式过程中 JSON 可能不完整，忽略解析错误
+                }
               }
             } catch {
               // 忽略解析错误的行
@@ -410,6 +433,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 const newContent = currentContent + delta;
                 updateLastMessage(newContent);
                 set({ streamingContent: newContent });
+
+                // 尝试解析完整 JSON，提取 location 和 time
+                try {
+                  const jsonData = JSON.parse(newContent);
+                  if (jsonData && typeof jsonData === 'object') {
+                    const updates: Partial<ChatState> = {};
+                    if (typeof jsonData.location === 'string') {
+                      updates.lastLocation = jsonData.location;
+                    }
+                    if (typeof jsonData.time === 'string') {
+                      updates.lastTime = jsonData.time;
+                    }
+                    if (updates.lastLocation || updates.lastTime) {
+                      set(updates);
+                    }
+                  }
+                } catch {
+                  // 流式过程中 JSON 可能不完整，忽略解析错误
+                }
               }
             } catch {
               // 忽略解析错误的行

@@ -105,6 +105,8 @@
 /* Markdown Styles */
 .markdown-body {
   word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .markdown-body p {

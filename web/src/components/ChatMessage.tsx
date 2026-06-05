@@ -18,7 +18,7 @@ const formatTextWithLineBreaks = (text: string): string => {
 };
 
 // 尝试解析JSON内容
-const tryParseJSON = (content: string): { isJSON: boolean; data: any; formatted: string } => {
+const tryParseJSON = (content: string): { isJSON: boolean; data: unknown; formatted: string } => {
   try {
     const parsed = JSON.parse(content);
     return {
@@ -36,7 +36,7 @@ const tryParseJSON = (content: string): { isJSON: boolean; data: any; formatted:
 };
 
 // JSON格式化展示组件
-function JSONViewer({ data, formatted }: { data: any; formatted: string }) {
+function JSONViewer({ data, formatted }: { data: unknown; formatted: string }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -50,34 +50,35 @@ function JSONViewer({ data, formatted }: { data: any; formatted: string }) {
     }
   };
 
-  // 提取关键字段用于预览
+  // 提取关键字段用于聊天框展示（优先 message）
   const getPreview = () => {
     if (typeof data !== 'object' || data === null) return String(data);
-    
-    // 优先展示 narrative 字段
-    if (data.narrative) {
-      return data.narrative;
+    const d = data as Record<string, unknown>;
+
+    // 优先展示 message 字段
+    if (typeof d.message === 'string') {
+      return d.message;
     }
-    // 其次展示 content 字段
-    if (data.content) {
-      return data.content;
+    // 其次展示 narrative 字段
+    if (typeof d.narrative === 'string') {
+      return d.narrative;
     }
-    // 展示 message 字段
-    if (data.message) {
-      return data.message;
+    // 再次展示 content 字段
+    if (typeof d.content === 'string') {
+      return d.content;
     }
     // 展示 text 字段
-    if (data.text) {
-      return data.text;
+    if (typeof d.text === 'string') {
+      return d.text;
     }
     // 默认展示类型信息
-    return `【${data.type || 'JSON响应'}】点击展开查看完整内容`;
+    return `【${typeof d.type === 'string' ? d.type : 'JSON响应'}】点击展开查看完整内容`;
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full min-w-0">
       {/* 预览/主要内容 */}
-      <div className="text-[#e8e4dc] text-sm leading-relaxed mb-2">
+      <div className="text-[#e8e4dc] text-sm leading-relaxed mb-2 break-words overflow-hidden">
         {getPreview()}
       </div>
 
@@ -110,21 +111,21 @@ function JSONViewer({ data, formatted }: { data: any; formatted: string }) {
       )}
 
       {/* 关键数据字段展示 */}
-      {data && typeof data === 'object' && data.data && (
+      {data && typeof data === 'object' && (data as Record<string, unknown>).data && (
         <div className="mt-2 p-2 bg-[#1a2f2f]/50 border border-[#2d5a5a]/30 rounded">
           <div className="text-xs text-[#5a7a7a] mb-1">数据字段:</div>
           <div className="text-xs text-[#a0c0c0] font-mono">
-            {JSON.stringify(data.data, null, 2)}
+            {JSON.stringify((data as Record<string, unknown>).data, null, 2)}
           </div>
         </div>
       )}
 
       {/* 选项按钮 */}
-      {data && typeof data === 'object' && data.options && Array.isArray(data.options) && data.options.length > 0 && (
+      {data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).options) && ((data as Record<string, unknown>).options as unknown[]).length > 0 && (
         <div className="mt-3">
           <div className="text-xs text-[#5a7a7a] mb-2">可选操作:</div>
           <div className="flex flex-wrap gap-2">
-            {data.options.map((option: string, index: number) => (
+            {((data as Record<string, unknown>).options as string[]).map((option: string, index: number) => (
               <button
                 key={index}
                 className="px-3 py-1.5 text-xs bg-[#2d5a5a]/30 hover:bg-[#2d5a5a]/50 border border-[#3d7a7a]/50 hover:border-[#3d7a7a] rounded text-[#a0c0c0] hover:text-[#e8e4dc] transition-all duration-200"
@@ -300,8 +301,8 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
 
   return (
     <>
-      <div className={`flex ${isPlayer ? 'justify-end' : 'justify-start'} mb-4`}>
-        <div className={`flex items-start gap-3 max-w-[80%] ${isPlayer ? 'flex-row-reverse' : 'flex-row'}`}>
+      <div className={`flex ${isPlayer ? 'justify-end' : 'justify-start'} mb-4 w-full min-w-0`}>
+        <div className={`flex items-start gap-3 max-w-[80%] min-w-0 ${isPlayer ? 'flex-row-reverse' : 'flex-row'}`}>
           {/* Avatar */}
           <div
             className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
@@ -314,7 +315,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
           </div>
 
           {/* Message Content */}
-          <div className={`flex flex-col ${isPlayer ? 'items-end' : 'items-start'}`}>
+          <div className={`flex flex-col min-w-0 max-w-full ${isPlayer ? 'items-end' : 'items-start'}`}>
             {/* Sender Name */}
             {!isPlayer && message.senderName && (
               <span className="text-xs text-[#a0c0c0] mb-1">{message.senderName}</span>
@@ -322,7 +323,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
 
             {/* Message Bubble */}
             <div
-              className={`px-4 py-3 rounded-2xl ${
+              className={`px-4 py-3 rounded-2xl min-w-0 max-w-full ${
                 isPlayer
                   ? 'bg-gradient-to-br from-[#2d5a5a] to-[#1a3a3a] border border-[#3d7a7a]/50 rounded-tr-sm'
                   : 'bg-gradient-to-br from-[#1a2f2f] to-[#0d1f1f] border border-[#2d5a5a]/50 rounded-tl-sm'
@@ -333,12 +334,12 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   onKeyDown={handleEditKeyDown}
-                  className="w-full min-w-[200px] bg-transparent text-[#e8e4dc] text-sm resize-none outline-none border-0 focus:ring-0 whitespace-pre-wrap"
+                  className="w-full min-w-0 bg-transparent text-[#e8e4dc] text-sm resize-none outline-none border-0 focus:ring-0 whitespace-pre-wrap break-words"
                   rows={3}
                   autoFocus
                 />
               ) : (
-                <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed">
+                <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
                   {isPlayer ? (
                     // 用户消息使用普通文本展示
                     <ReactMarkdown

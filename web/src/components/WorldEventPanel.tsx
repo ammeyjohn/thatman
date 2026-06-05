@@ -1,8 +1,14 @@
 import { useGameStore } from '../stores/gameStore';
+import { useChatStore } from '../stores/chatStore';
 import { MapPin, Clock } from 'lucide-react';
 
 export function WorldEventPanel() {
   const { world } = useGameStore();
+  const { lastLocation, lastTime } = useChatStore();
+
+  // 优先使用从后端 JSON 解析出的 location/time，否则回退到 gameStore 的默认值
+  const displayLocation = lastLocation || world.location;
+  const displayTime = lastTime || world.time;
 
   return (
     <div className="w-[280px] bg-[#0d1f1f] border-l border-[#2d5a5a]/30 flex flex-col">
@@ -21,7 +27,7 @@ export function WorldEventPanel() {
         <div className="mb-3 p-3 bg-gradient-to-r from-[#2d5a5a]/20 to-transparent rounded-lg border border-[#2d5a5a]/30">
           <div className="flex items-center gap-2 text-[#c9a227]">
             <MapPin className="w-4 h-4" />
-            <span className="text-sm font-medium">{world.location}</span>
+            <span className="text-sm font-medium">{displayLocation}</span>
           </div>
         </div>
 
@@ -29,7 +35,7 @@ export function WorldEventPanel() {
         <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
           <div className="flex items-center gap-2 text-[#7ababa]">
             <Clock className="w-4 h-4" />
-            <span className="text-sm font-medium">{world.time}</span>
+            <span className="text-sm font-medium">{displayTime}</span>
           </div>
         </div>
       </div>

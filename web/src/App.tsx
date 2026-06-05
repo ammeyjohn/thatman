@@ -62,7 +62,9 @@ function App() {
       </div>
 
       {/* Center Panel - Chat Area */}
-      <ChatArea />
+      <div className="flex-1 min-w-0 flex flex-col">
+        <ChatArea />
+      </div>
 
       {/* Right Collapse/Expand Handle */}
       <div className="relative flex items-center">

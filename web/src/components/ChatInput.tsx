@@ -38,7 +38,7 @@ export function ChatInput() {
   const contextPercent = Math.round((streamStats.contextTokens / streamStats.contextMax) * 100);
 
   return (
-    <div className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30">
+    <div className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30 flex-shrink-0">
       {/* Quick Actions */}
       <div className="flex gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
         {quickActions.map((action) => (
