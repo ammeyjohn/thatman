@@ -17,21 +17,21 @@ logger = logging.getLogger(__name__)
 
 chat_bp = Blueprint('chat', __name__)
 
-# 初始化 chat agent（延迟加载）
-_chat_agent = None
+# 初始化 chat agent 缓存（按 character_id 和 user_id 区分）
+_chat_agents = {}
 
 
-def get_agent():
-    """获取或初始化 chat agent"""
-    global _chat_agent
-    if _chat_agent is None:
+def get_agent(character_id=None, user_id=None):
+    """获取或初始化 chat agent（按 character_id 和 user_id 缓存）"""
+    cache_key = f"{character_id or '_no_char_'}_{user_id or '_no_user_'}"
+    if cache_key not in _chat_agents:
         try:
-            _chat_agent = get_chat_agent()
-            info_log("ChatAgent 初始化成功")
+            _chat_agents[cache_key] = get_chat_agent(character_id=character_id, user_id=user_id)
+            info_log(f"ChatAgent 初始化成功 - character_id: {character_id or 'default'}, user_id: {user_id or 'default'}")
         except Exception as e:
             error_log(f"ChatAgent 初始化失败: {e}")
             raise
-    return _chat_agent
+    return _chat_agents[cache_key]
 
 
 @chat_bp.route('/chat/completions', methods=['POST'])
@@ -54,8 +54,11 @@ def chat_completions():
     messages = data.get('messages', [])
     stream = data.get('stream', False)
     temperature = data.get('temperature', 0.7)
+    character_id = data.get('character_id')
+    # 从请求头中获取 X-User-Id 作为 user_id
+    user_id = request.headers.get('X-User-Id')
 
-    debug_log(f"收到请求 - stream={stream}, temperature={temperature}")
+    debug_log(f"收到请求 - stream={stream}, temperature={temperature}, character_id={character_id}, user_id={user_id}")
     debug_log(f"收到消息内容: {json.dumps(messages, ensure_ascii=False)}")
 
     if not messages:
@@ -68,17 +71,17 @@ def chat_completions():
         }), 400
 
     try:
-        # 获取 chat agent
-        agent = get_agent()
+        # 获取 chat agent（按 character_id 和 user_id 区分）
+        agent = get_chat_agent(character_id=character_id, user_id=user_id)
 
         if stream:
             # 流式响应
             def generate():
                 debug_log("开始流式响应...")
-                chunk_index = 0
+                full_content = []
 
                 for chunk in agent.chat(messages, stream=True):
-                    chunk_index += 1
+                    full_content.append(chunk)
                     response_data = {
                         'id': f'chatcmpl-{int(time.time() * 1000)}',
                         'object': 'chat.completion.chunk',
@@ -93,18 +96,30 @@ def chat_completions():
                         }]
                     }
                     response_line = f'data: {json.dumps(response_data, ensure_ascii=False)}\n\n'
-                    debug_log(f"返回分块 [{chunk_index}]: {chunk[:50]}...")
                     yield response_line
 
                 # 发送结束标记
-                debug_log("流式响应结束，发送 [DONE] 标记")
+                complete_content = ''.join(full_content)
+                debug_log(f"完整内容: {complete_content}")
                 yield 'data: [DONE]\n\n'
+
+                # 流式响应结束后，保存对话记忆（在生成器外部执行）
+                try:
+                    agent.save_chat_memory(messages, complete_content)
+                except Exception as e:
+                    error_log(f"流式响应后保存记忆失败: {e}")
 
             return Response(generate(), mimetype='text/plain')
         else:
             # 非流式响应
             debug_log("使用非流式响应")
             content = agent.chat_non_stream(messages)
+
+            # 保存对话记忆
+            try:
+                agent.save_chat_memory(messages, content)
+            except Exception as e:
+                error_log(f"非流式响应后保存记忆失败: {e}")
 
             response_data = {
                 'id': f'chatcmpl-{int(time.time() * 1000)}',
@@ -125,7 +140,7 @@ def chat_completions():
                     'total_tokens': len(json.dumps(messages)) + len(content)
                 }
             }
-            debug_log(f"返回响应: {json.dumps(response_data, ensure_ascii=False)[:200]}...")
+            debug_log(f"返回响应: {json.dumps(response_data, ensure_ascii=False)}")
             return jsonify(response_data)
 
     except Exception as e:
