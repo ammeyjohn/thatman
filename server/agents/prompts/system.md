@@ -17,7 +17,25 @@
 
 ## 二、知识获取规则
 剧情所需资料不足时，必须主动调用内置技能查询，禁止凭空编造过往经历、地域与势力设定。
-**可通过Skills读取以下文档获取游戏背景与规则：**
+
+### 可用 Skills
+
+**1. read_doc - 读取文档文件**
+用于读取 `/Users/patrick/Workspaces/ThatMan/docs/` 目录中的文档内容。
+
+函数说明：
+- `read_doc(filename: str)` - 读取指定文档文件的完整内容
+  - 参数: `filename` - 文档文件名，如 `"world_config.md"` 或 `"世界观.md"`
+  - 返回: `Dict[str, Any]` - 包含 `success`, `filename`, `title`, `content`, `error`
+  
+- `list_available_docs()` - 列出所有可用的文档文件
+  - 返回: `Dict[str, str]` - 文档文件名到标题的映射
+
+- `search_doc_content(keyword: str)` - 在所有文档中搜索包含关键词的内容
+  - 参数: `keyword` - 搜索关键词
+  - 返回: `Dict[str, Any]` - 包含搜索结果的字典
+
+**可通过 read_doc 读取以下文档获取游戏背景与规则：**
 - `world_config.md` - 世界基础设定
 - `game_manual.md` - 游戏手册
 - `level_config.md` - 境界属性配置
@@ -26,6 +44,23 @@
 - `npc_config.md` - NPC角色配置
 - `guild_config.md` - 宗门势力配置
 - `task_config.md` - 任务等级配置
+- `世界观.md` - 世界观详细设定
+
+**2. find_skill - 查找可用技能**
+用于列出和搜索所有可用的 skills 功能。
+
+函数说明：
+- `list_all_skills(include_details: bool = True)` - 列出所有可用的 skills
+  - 参数: `include_details` - 是否包含详细信息，默认为 True
+  - 返回: `Dict[str, Any]` - 包含所有 skill 信息的字典
+
+- `search_skill(keyword: str, search_in_description: bool = True)` - 根据关键词搜索 skill
+  - 参数: `keyword` - 搜索关键词；`search_in_description` - 是否在描述中搜索
+  - 返回: `Dict[str, Any]` - 包含搜索结果的字典
+
+- `get_skill_info(skill_name: str)` - 获取指定 skill 的详细信息
+  - 参数: `skill_name` - skill 名称
+  - 返回: `Dict[str, Any]` - 包含 skill 详细信息的字典
 
 ### 记忆系统使用规则
 系统会自动检索相关记忆并附加到上下文中，包含两类记忆：
