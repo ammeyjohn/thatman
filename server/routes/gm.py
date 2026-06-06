@@ -1,3 +1,4 @@
+import time as time_module
 from flask import Blueprint, request, jsonify
 import json
 import logging
@@ -32,6 +33,12 @@ def get_gm():
             error_log(f"GameMaster 初始化失败: {e}")
             raise
     return _gm_instance
+
+
+def _get_storage():
+    """获取 GMStorage 实例"""
+    gm = get_gm()
+    return gm.storage
 
 
 @gm_bp.route('/gm/chat', methods=['POST'])
@@ -98,6 +105,19 @@ def gm_chat():
             }
         }), 400
 
+    # 保存用户消息到聊天历史（与 LLM 无关，保证所有聊天都保存）
+    try:
+        storage = _get_storage()
+        now_ms = int(time_module.time() * 1000)
+        storage.save_chat_message(
+            uid=uid,
+            sender="player",
+            content=user_input,
+            timestamp=now_ms,
+        )
+    except Exception as e:
+        error_log(f"保存用户聊天消息失败: {e}")
+
     try:
         gm = get_gm()
 
@@ -118,11 +138,225 @@ def gm_chat():
             'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
         }
 
+        # 保存 NPC 回复到聊天历史（与 LLM 无关，保证所有聊天都保存）
+        try:
+            storage = _get_storage()
+            now_ms = int(time_module.time() * 1000)
+            storage.save_chat_message(
+                uid=uid,
+                sender="npc",
+                content=response_data.get('dialog', ''),
+                timestamp=now_ms,
+                actions=response_data.get('actions'),
+                player_update=response_data.get('player_update'),
+                ui_config=response_data.get('ui_config'),
+            )
+        except Exception as e:
+            error_log(f"保存NPC聊天消息失败: {e}")
+
         debug_log(f"返回响应: {json.dumps(response_data, ensure_ascii=False)}")
         return jsonify(response_data)
 
     except Exception as e:
         error_log(f"处理 GM 请求时出错: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/chat/history', methods=['GET'])
+def get_chat_history():
+    """
+    获取用户聊天历史
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+        limit: 返回消息数量上限，默认100
+    """
+    uid = request.args.get('uid', '')
+    limit = int(request.args.get('limit', 100))
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        docs = storage.get_chat_history(uid, limit=limit)
+        return jsonify({
+            'uid': uid,
+            'messages': docs,
+            'total': len(docs),
+        })
+    except Exception as e:
+        error_log(f"获取聊天历史失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/chat/history', methods=['DELETE'])
+def clear_chat_history():
+    """
+    清除用户聊天历史
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        success = storage.clear_chat_history(uid)
+        if success:
+            return jsonify({'success': True, 'message': '聊天历史已清除'})
+        else:
+            return jsonify({
+                'error': {
+                    'message': '清除聊天历史失败',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+    except Exception as e:
+        error_log(f"清除聊天历史失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/user/info', methods=['GET'])
+def get_user_info():
+    """
+    获取用户基本信息
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        player_data = storage.couch_get_player(uid)
+        if not player_data or '_id' not in player_data:
+            return jsonify({
+                'uid': uid,
+                'exists': False,
+                'info': None,
+            })
+        # 移除 CouchDB 内部字段
+        player_data.pop('_rev', None)
+        player_data.pop('_id', None)
+        return jsonify({
+            'uid': uid,
+            'exists': True,
+            'info': player_data,
+        })
+    except Exception as e:
+        error_log(f"获取用户信息失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/user/init', methods=['POST'])
+def init_user():
+    """
+    初始化用户（如果不存在则创建基础记录）
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        player_data = storage.couch_get_player(uid)
+
+        if not player_data or '_id' not in player_data:
+            # 创建基础用户记录
+            initial_data = {
+                "name": "",
+                "current_location": "",
+                "current_status": "",
+            }
+            storage.couch_save_player(uid, initial_data)
+            info_log(f"初始化新用户: {uid}")
+            return jsonify({
+                'uid': uid,
+                'created': True,
+                'info': initial_data,
+            })
+        else:
+            # 用户已存在
+            player_data.pop('_rev', None)
+            player_data.pop('_id', None)
+            return jsonify({
+                'uid': uid,
+                'created': False,
+                'info': player_data,
+            })
+    except Exception as e:
+        error_log(f"初始化用户失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

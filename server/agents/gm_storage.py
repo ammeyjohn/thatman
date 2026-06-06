@@ -82,6 +82,7 @@ class GMStorage:
         self._db_entities: str = f"{self._couch_db_prefix}entities"
         self._db_links: str = f"{self._couch_db_prefix}links"
         self._db_world_snaps: str = f"{self._couch_db_prefix}world_snaps"
+        self._db_chat_history: str = f"{self._couch_db_prefix}chat_history"
 
         # 初始化 CouchDB httpx 客户端
         self._couch_client: httpx.Client = httpx.Client(
@@ -121,6 +122,7 @@ class GMStorage:
             self._db_entities,
             self._db_links,
             self._db_world_snaps,
+            self._db_chat_history,
         ]
         for db_name in db_names:
             try:
@@ -136,6 +138,31 @@ class GMStorage:
                     debug_log(f"CouchDB 数据库已存在: {db_name}")
             except Exception as e:
                 error_log(f"检查/创建 CouchDB 数据库失败: {db_name}, 错误: {e}")
+
+        # 为 chat_history 创建 Mango 索引（uid + timestamp），支持排序查询
+        self._ensure_chat_history_index()
+
+    def _ensure_chat_history_index(self) -> None:
+        """确保 chat_history 数据库有 uid+timestamp 的 Mango 索引"""
+        try:
+            index_doc = {
+                "index": {
+                    "fields": ["uid", "timestamp"]
+                },
+                "name": "uid-timestamp-index",
+                "type": "json"
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_chat_history}/_index",
+                json_data=index_doc,
+            )
+            if resp.status_code in (200, 201):
+                debug_log("chat_history 索引创建/已存在: uid-timestamp-index")
+            else:
+                warn_log(f"chat_history 索引创建失败: 状态码={resp.status_code}, 响应={resp.text[:200]}")
+        except Exception as e:
+            error_log(f"chat_history 索引创建异常: {e}")
 
     def _couch_request(
         self,
@@ -416,6 +443,148 @@ class GMStorage:
         except Exception as e:
             error_log(f"保存世界快照异常: {e}")
             return {}
+
+    # ================================================================
+    # 聊天记录操作
+    # ================================================================
+
+    def save_chat_message(
+        self,
+        uid: str,
+        sender: str,
+        content: str,
+        timestamp: int,
+        actions: Optional[list] = None,
+        player_update: Optional[dict] = None,
+        ui_config: Optional[dict] = None,
+    ) -> dict:
+        """
+        保存单条聊天消息到 thatman_chat_history
+
+        Args:
+            uid: 玩家唯一标识
+            sender: 发送者，"player" 或 "npc"
+            content: 消息内容
+            timestamp: 消息时间戳（毫秒）
+            actions: 建议动作列表（仅 NPC 消息）
+            player_update: 玩家数据变更（仅 NPC 消息）
+            ui_config: UI 配置变更（仅 NPC 消息）
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            doc_id = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}"
+            doc = {
+                "_id": doc_id,
+                "uid": uid,
+                "sender": sender,
+                "content": content,
+                "timestamp": timestamp,
+            }
+            if actions:
+                doc["actions"] = actions
+            if player_update:
+                doc["player_update"] = player_update
+            if ui_config:
+                doc["ui_config"] = ui_config
+
+            resp = self._couch_request("PUT", f"/{self._db_chat_history}/{doc_id}", json_data=doc)
+            if resp.status_code in (201, 202):
+                debug_log(f"保存聊天消息成功: uid={uid}, sender={sender}")
+                return resp.json()
+            else:
+                warn_log(f"保存聊天消息失败: uid={uid}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存聊天消息异常: uid={uid}, 错误: {e}")
+            return {}
+
+    def get_chat_history(self, uid: str, limit: int = 100, before_timestamp: Optional[int] = None) -> list:
+        """
+        获取用户聊天历史
+
+        Args:
+            uid: 玩家唯一标识
+            limit: 返回消息数量上限
+            before_timestamp: 获取此时间戳之前的消息（用于分页）
+
+        Returns:
+            聊天消息列表，按时间升序排列，失败返回空列表
+        """
+        try:
+            selector: Dict[str, Any] = {"uid": uid}
+            if before_timestamp:
+                selector["timestamp"] = {"$lt": before_timestamp}
+
+            body = {
+                "selector": selector,
+                "sort": [{"timestamp": "asc"}],
+                "limit": limit,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_chat_history}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                info_log(f"获取聊天历史成功: uid={uid}, 数量={len(docs)}")
+                return docs
+            else:
+                warn_log(f"获取聊天历史失败: uid={uid}, 状态码: {resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"获取聊天历史异常: uid={uid}, 错误: {e}")
+            return []
+
+    def clear_chat_history(self, uid: str) -> bool:
+        """
+        清除用户聊天历史
+
+        Args:
+            uid: 玩家唯一标识
+
+        Returns:
+            True 表示清除成功，False 表示失败
+        """
+        try:
+            # 先查询所有该用户的消息
+            body = {
+                "selector": {"uid": uid},
+                "limit": 1000,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_chat_history}/_find",
+                json_data=body,
+            )
+            if resp.status_code != 200:
+                warn_log(f"查询聊天历史失败: uid={uid}, 状态码: {resp.status_code}")
+                return False
+
+            docs = resp.json().get("docs", [])
+            if not docs:
+                debug_log(f"无聊天历史需要清除: uid={uid}")
+                return True
+
+            # 批量删除
+            deleted = 0
+            for doc in docs:
+                del_resp = self._couch_request(
+                    "DELETE",
+                    f"/{self._db_chat_history}/{doc['_id']}?rev={doc['_rev']}",
+                )
+                if del_resp.status_code in (200, 202):
+                    deleted += 1
+
+            info_log(f"清除聊天历史完成: uid={uid}, 删除={deleted}/{len(docs)}")
+            return True
+        except Exception as e:
+            error_log(f"清除聊天历史异常: uid={uid}, 错误: {e}")
+            return False
 
     # ================================================================
     # Qdrant 剧情向量操作

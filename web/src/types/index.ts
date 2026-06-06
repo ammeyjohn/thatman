@@ -11,6 +11,8 @@ export interface CharacterState {
   spirit: number;
   maxSpirit: number;
   equipment: Equipment[];
+  currentLocation: string;
+  currentStatus: string;
 }
 
 export interface Equipment {

@@ -42,6 +42,8 @@ interface ChatState {
   deleteMessage: (messageId: string) => void;
   editMessage: (messageId: string, newContent: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
+  loadChatHistory: () => Promise<void>;
+  clearHistory: () => Promise<void>;
 }
 
 const initialMessages: ChatMessage[] = [];
@@ -102,6 +104,8 @@ function applyGmResponseToGameStore(
     const charUpdates: Record<string, unknown> = {};
 
     if (typeof playerUpdate.name === 'string') charUpdates.name = playerUpdate.name;
+    if (typeof playerUpdate.current_location === 'string') charUpdates.currentLocation = playerUpdate.current_location;
+    if (typeof playerUpdate.current_status === 'string') charUpdates.currentStatus = playerUpdate.current_status;
     if (typeof playerUpdate.realm === 'string') charUpdates.realm = playerUpdate.realm;
     if (typeof playerUpdate.realm_stage === 'string') charUpdates.realmStage = playerUpdate.realm_stage;
     if (typeof playerUpdate.level === 'number') charUpdates.level = playerUpdate.level;
@@ -115,6 +119,11 @@ function applyGmResponseToGameStore(
 
     if (Object.keys(charUpdates).length > 0) {
       gameStore.updateCharacter(charUpdates);
+    }
+
+    // 同步更新 world.location
+    if (typeof playerUpdate.current_location === 'string') {
+      gameStore.updateWorld({ location: playerUpdate.current_location });
     }
   }
 
@@ -370,6 +379,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   resetStreamStats: () => set({ streamStats: { ...initialStreamStats } }),
+
+  loadChatHistory: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=100`);
+      if (!response.ok) {
+        console.error('加载聊天历史失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      const docs = data.messages || [];
+
+      if (docs.length === 0) return;
+
+      // 将数据库记录转换为 ChatMessage 格式
+      const messages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
+        id: (doc._id as string) || generateId(),
+        sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
+        content: (doc.content as string) || '',
+        timestamp: (doc.timestamp as number) || Date.now(),
+        type: 'normal' as const,
+        actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
+        parsedJSON: doc.player_update || doc.ui_config ? {
+          player_update: doc.player_update,
+          ui_config: doc.ui_config,
+        } : undefined,
+      }));
+
+      set({ messages });
+      console.log(`[ChatHistory] 加载了 ${messages.length} 条历史消息`);
+    } catch (error) {
+      console.error('加载聊天历史失败:', error);
+    }
+  },
+
+  clearHistory: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        set({ messages: [] });
+        console.log('[ChatHistory] 聊天历史已清除');
+      } else {
+        console.error('清除聊天历史失败:', response.status);
+      }
+    } catch (error) {
+      console.error('清除聊天历史失败:', error);
+    }
+  },
 
   stopGeneration: () => {
     const { abortController } = get();

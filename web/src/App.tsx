@@ -3,6 +3,8 @@ import { CharacterPanel } from './components/CharacterPanel';
 import { WorldEventPanel } from './components/WorldEventPanel';
 import { ChatArea } from './components/ChatArea';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { useChatStore } from './stores/chatStore';
+import { useGameStore } from './stores/gameStore';
 
 const LEFT_COLLAPSED_KEY = 'thatman:leftCollapsed';
 const RIGHT_COLLAPSED_KEY = 'thatman:rightCollapsed';
@@ -23,6 +25,16 @@ function App() {
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     getInitialCollapsed(RIGHT_COLLAPSED_KEY, false)
   );
+
+  // 页面初始化时加载聊天历史和用户信息
+  useEffect(() => {
+    const loadInitialData = async () => {
+      const { loadUserInfo } = useGameStore.getState();
+      const { loadChatHistory } = useChatStore.getState();
+      await Promise.all([loadUserInfo(), loadChatHistory()]);
+    };
+    loadInitialData();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(LEFT_COLLAPSED_KEY, String(leftCollapsed));
