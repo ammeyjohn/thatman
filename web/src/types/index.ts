@@ -13,6 +13,10 @@ export interface CharacterState {
   equipment: Equipment[];
   currentLocation: string;
   currentStatus: string;
+  birthDate: string;
+  lifespan: string;
+  clothing: string;
+  inventory: InventoryItem[];
 }
 
 export interface Equipment {
@@ -20,6 +24,14 @@ export interface Equipment {
   name: string;
   type: 'weapon' | 'armor' | 'accessory';
   icon: string;
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  quantity: number;
 }
 
 export interface WorldState {

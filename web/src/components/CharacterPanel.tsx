@@ -1,6 +1,6 @@
 import { useGameStore } from '../stores/gameStore';
 import { StatusBar } from './StatusBar';
-import { Sword, Shield, Circle, Sparkles, MapPin, Activity } from 'lucide-react';
+import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, Package } from 'lucide-react';
 
 const equipmentIcons: Record<string, React.ReactNode> = {
   sword: <Sword className="w-4 h-4" />,
@@ -41,6 +41,12 @@ export function CharacterPanel() {
             <span className="px-3 py-1 bg-gradient-to-r from-[#c9a227]/20 to-[#c9a227]/10 border border-[#c9a227]/50 rounded-full text-[#c9a227] text-sm font-medium">
               {character.realm}·{character.realmStage}
             </span>
+            {character.level > 0 && (
+              <span className="px-3 py-1 bg-gradient-to-r from-[#5ab8b8]/20 to-[#5ab8b8]/10 border border-[#5ab8b8]/50 rounded-full text-[#5ab8b8] text-sm font-medium flex items-center gap-1">
+                <TrendingUp className="w-3 h-3" />
+                Lv.{character.level}
+              </span>
+            )}
           </div>
         </div>
 
@@ -67,6 +73,63 @@ export function CharacterPanel() {
             <p className="text-[#e8e4dc] text-sm pl-6" style={{ fontFamily: 'Noto Serif SC, serif' }}>
               {character.currentStatus}
             </p>
+          </div>
+        )}
+
+        {/* Birth Date & Lifespan */}
+        {(character.birthDate || character.lifespan) && (
+          <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="w-4 h-4 text-[#c9a227]" />
+              <span className="text-[#c9a227] text-xs font-medium">生辰寿元</span>
+            </div>
+            <div className="pl-6">
+              {character.birthDate && (
+                <p className="text-[#e8e4dc] text-sm" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                  生于 {character.birthDate}
+                </p>
+              )}
+              {character.lifespan && (
+                <p className="text-[#e8e4dc] text-sm" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                  寿元 {character.lifespan}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Clothing */}
+        {character.clothing && (
+          <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
+            <div className="flex items-center gap-2 mb-1">
+              <Shirt className="w-4 h-4 text-[#b388ff]" />
+              <span className="text-[#b388ff] text-xs font-medium">衣着</span>
+            </div>
+            <p className="text-[#e8e4dc] text-sm pl-6" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+              {character.clothing}
+            </p>
+          </div>
+        )}
+
+        {/* Inventory */}
+        {character.inventory && character.inventory.length > 0 && (
+          <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
+            <div className="flex items-center gap-2 mb-1">
+              <Package className="w-4 h-4 text-[#ffab40]" />
+              <span className="text-[#ffab40] text-xs font-medium">随身物品</span>
+            </div>
+            <div className="pl-6 space-y-1">
+              {character.inventory.map((item) => (
+                <div key={item.id} className="flex items-center justify-between">
+                  <span className="text-[#e8e4dc] text-sm" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                    {item.name}
+                  </span>
+                  {item.quantity > 1 && (
+                    <span className="text-[#5a7a7a] text-xs">x{item.quantity}</span>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

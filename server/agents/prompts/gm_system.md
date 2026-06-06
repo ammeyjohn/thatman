@@ -177,6 +177,10 @@ player_update 中可包含以下字段（仅填写需更新的字段）：
 | name | string | 角色名 |
 | current_location | string | 当前所在地点，如"青墟古域·云溪村" |
 | current_status | string | 当前状态描述，如"正在云溪村中修炼调息"、"与妖兽战斗中"、"探索上古秘境" |
+| birth_date | string | 出生年月，如"天元三千六百年·孟春" |
+| lifespan | string | 寿命/寿元，如"一百二十载"、"寿元未尽" |
+| clothing | string | 衣着描述，如"青色道袍"、"破旧布衣" |
+| inventory | array | 背包物品列表，每项包含 id、name、type、description、quantity |
 | realm | string | 修为境界 |
 | realm_stage | string | 境界阶段 |
 | level | number | 等级 |
@@ -192,6 +196,49 @@ player_update 中可包含以下字段（仅填写需更新的字段）：
 - 每次回复时，如果玩家地点发生变化，**必须**在 player_update 中更新 `current_location`
 - 每次回复时，**必须**在 player_update 中更新 `current_status`，描述玩家当前正在做什么或处于什么状态
 - `current_status` 应为简短的文字描述（10-20字），反映玩家当前的行为或处境
+
+### 角色信息识别与保存规则
+
+GM 需主动识别对话中涉及角色信息的内容，并自主判断哪些信息需要持久化保存到数据库。
+
+#### 识别原则
+1. **凡是描述角色身份、属性、状态、外貌、经历的信息，均属于角色信息**，必须通过 player_update 保存
+2. **凡是玩家在对话中首次提及或确认的角色设定，必须立即保存**，不可遗漏
+3. **凡是剧情发展导致角色属性变化的，必须同步更新**，不可延迟
+
+#### 必须识别并保存的角色信息类别
+
+| 类别 | 示例 | 对应字段 |
+|------|------|----------|
+| 身份信息 | 角色名、出身、师承 | name 及自定义字段 |
+| 生辰寿元 | 出生年月、当前寿命、寿元变化 | birth_date、lifespan |
+| 外貌特征 | 衣着打扮、容貌特征、体型 | clothing 及自定义字段 |
+| 修为境界 | 境界突破、修为进退、等级变化 | realm、realm_stage、level |
+| 身体状态 | 受伤、中毒、疗伤、生命法力变化 | health、max_health、mana、max_mana、spirit、max_spirit |
+| 所持物品 | 获得丹药、材料、灵石、法宝 | inventory、equipment |
+| 所处位置 | 移动、传送、秘境探索 | current_location |
+| 当前行为 | 修炼、战斗、探索、休息 | current_status |
+
+#### 自定义字段扩展
+除上表列出的固定字段外，GM 可根据剧情需要**自行添加**新的角色信息字段。例如：
+- `sect` — 所属宗门，如"青云宗"
+- `master` — 师父名号，如"玄清真人"
+- `spirit_root` — 灵根类型，如"先天水灵根"
+- `techniques` — 已学功法列表
+- `titles` — 获得的称号
+- `karma` — 功德/业力值
+- `appearance` — 容貌描述
+
+**自定义字段规则**：
+- 字段名使用 snake_case 格式（如 `spirit_root`）
+- 字段值类型限定为 string、number、array、object
+- 添加自定义字段时，确保该信息在后续剧情中会被引用，避免冗余
+
+#### 保存时机
+- **首次出现**：角色信息首次被提及或确认时，立即保存
+- **发生变化**：剧情导致角色属性变化时，同步更新
+- **每次回复**：`current_location` 和 `current_status` 必须每次更新
+- **无需保存**：临时性的、不会影响后续剧情的描述（如"他微微一笑"）
 
 ### 新增实体数据规范
 

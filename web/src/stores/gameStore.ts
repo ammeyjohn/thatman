@@ -16,7 +16,7 @@ const initialCharacter: CharacterState = {
   realm: '炼气期',
   realmStage: '中期',
   spiritRoot: '先天水灵根',
-  level: 12,
+  level: 0,
   health: 850,
   maxHealth: 1000,
   mana: 420,
@@ -26,6 +26,10 @@ const initialCharacter: CharacterState = {
   equipment: [],
   currentLocation: '',
   currentStatus: '',
+  birthDate: '',
+  lifespan: '',
+  clothing: '',
+  inventory: [],
 };
 
 const initialWorld: WorldState = {
@@ -104,6 +108,16 @@ export const useGameStore = create<GameState>((set) => ({
       if (typeof info.current_status === 'string' && info.current_status) {
         charUpdates.currentStatus = info.current_status;
       }
+      if (typeof info.birth_date === 'string' && info.birth_date) {
+        charUpdates.birthDate = info.birth_date;
+      }
+      if (typeof info.lifespan === 'string' && info.lifespan) {
+        charUpdates.lifespan = info.lifespan;
+      }
+      if (typeof info.clothing === 'string' && info.clothing) {
+        charUpdates.clothing = info.clothing;
+      }
+      if (Array.isArray(info.inventory)) charUpdates.inventory = info.inventory;
       if (typeof info.realm === 'string') charUpdates.realm = info.realm;
       if (typeof info.realm_stage === 'string') charUpdates.realmStage = info.realm_stage;
       if (typeof info.level === 'number') charUpdates.level = info.level;

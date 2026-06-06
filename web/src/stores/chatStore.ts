@@ -158,6 +158,10 @@ function applyGmResponseToGameStore(
     if (typeof playerUpdate.name === 'string') charUpdates.name = playerUpdate.name;
     if (typeof playerUpdate.current_location === 'string') charUpdates.currentLocation = playerUpdate.current_location;
     if (typeof playerUpdate.current_status === 'string') charUpdates.currentStatus = playerUpdate.current_status;
+    if (typeof playerUpdate.birth_date === 'string') charUpdates.birthDate = playerUpdate.birth_date;
+    if (typeof playerUpdate.lifespan === 'string') charUpdates.lifespan = playerUpdate.lifespan;
+    if (typeof playerUpdate.clothing === 'string') charUpdates.clothing = playerUpdate.clothing;
+    if (Array.isArray(playerUpdate.inventory)) charUpdates.inventory = playerUpdate.inventory;
     if (typeof playerUpdate.realm === 'string') charUpdates.realm = playerUpdate.realm;
     if (typeof playerUpdate.realm_stage === 'string') charUpdates.realmStage = playerUpdate.realm_stage;
     if (typeof playerUpdate.level === 'number') charUpdates.level = playerUpdate.level;
