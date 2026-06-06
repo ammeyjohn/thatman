@@ -77,6 +77,104 @@ function extractMessageFromPartialJSON(rawContent: string): string | null {
   return result;
 }
 
+/**
+ * 从原始内容中尝试解析 JSON，处理 markdown 代码块包裹和前后多余文本
+ * @param content 原始内容
+ * @returns 解析后的 JSON 对象，如果无法解析则返回 null
+ */
+function tryParseJSONFromContent(content: string): Record<string, unknown> | null {
+  if (!content || !content.trim()) return null;
+
+  // 策略1：直接解析
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch { /* 继续尝试 */ }
+
+  // 策略2：去除 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
+  const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1]);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* 继续尝试 */ }
+  }
+
+  // 策略3：找到第一个 { 和最后一个 } 之间的内容
+  const firstBrace = content.indexOf('{');
+  const lastBrace = content.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const jsonStr = content.slice(firstBrace, lastBrace + 1);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* 无法解析 */ }
+  }
+
+  return null;
+}
+
+/**
+ * 从部分 JSON 中提取 actions 数组（流式传输期间使用）
+ * 策略：找到 "actions": 后的数组，提取其中的字符串元素
+ * @param rawContent 已接收的原始内容
+ * @returns 提取到的 actions 数组，如果无法提取则返回 null
+ */
+function extractActionsFromPartialJSON(rawContent: string): string[] | null {
+  // 找到 "actions" 字段
+  const match = rawContent.match(/"actions"\s*:\s*\[/);
+  if (!match || match.index === undefined) return null;
+
+  // 定位到数组内容的起始位置（跳过 "actions":[ 部分）
+  const startIndex = match.index + match[0].length;
+  const arrayContent = rawContent.slice(startIndex);
+
+  // 提取数组中的字符串元素
+  const actions: string[] = [];
+  let i = 0;
+  let inString = false;
+  let currentString = '';
+
+  while (i < arrayContent.length) {
+    const ch = arrayContent[i];
+
+    if (inString) {
+      if (ch === '\\' && i + 1 < arrayContent.length) {
+        // 转义字符
+        const nextChar = arrayContent[i + 1];
+        switch (nextChar) {
+          case '"': currentString += '"'; break;
+          case '\\': currentString += '\\'; break;
+          case 'n': currentString += '\n'; break;
+          case 'r': currentString += '\r'; break;
+          case 't': currentString += '\t'; break;
+          default: currentString += nextChar;
+        }
+        i += 2;
+        continue;
+      } else if (ch === '"') {
+        // 字符串结束
+        inString = false;
+        actions.push(currentString);
+        currentString = '';
+      } else {
+        currentString += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inString = true;
+        currentString = '';
+      } else if (ch === ']') {
+        // 数组结束
+        break;
+      }
+    }
+    i += 1;
+  }
+
+  return actions.length > 0 ? actions : null;
+}
+
 export interface StreamStats {
   contextTokens: number;
   contextMax: number;
@@ -361,37 +459,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
                 // 尝试解析 JSON，提取 message 字段进行流式展示
                 let displayContent = rawContent;
-                try {
-                  const jsonData = JSON.parse(rawContent);
-                  if (jsonData && typeof jsonData === 'object') {
-                    // 提取 message 字段用于流式展示
-                    if (typeof jsonData.message === 'string') {
-                      displayContent = jsonData.message;
-                      lastParsedMessage = jsonData.message;
-                    }
-                    // 提取 actions 字段
-                    if (Array.isArray(jsonData.actions)) {
-                      const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
-                      updateLastMessageActions(actions);
-                    }
-                    // 保存完整解析的 JSON
-                    updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
-                    // 保存原始 JSON 字符串
-                    updateLastMessageRawJSON(rawContent);
-                    // 提取 location 和 time
-                    const updates: Partial<ChatState> = {};
-                    if (typeof jsonData.location === 'string') {
-                      updates.lastLocation = jsonData.location;
-                    }
-                    if (typeof jsonData.time === 'string') {
-                      updates.lastTime = jsonData.time;
-                    }
-                    if (updates.lastLocation || updates.lastTime) {
-                      set(updates);
-                    }
+                const jsonData = tryParseJSONFromContent(rawContent);
+                if (jsonData) {
+                  // 提取 message 字段用于流式展示
+                  if (typeof jsonData.message === 'string') {
+                    displayContent = jsonData.message;
+                    lastParsedMessage = jsonData.message;
                   }
-                } catch {
-                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取 message 字段
+                  // 提取 actions 字段
+                  if (Array.isArray(jsonData.actions)) {
+                    const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
+                    updateLastMessageActions(actions);
+                  }
+                  // 保存完整解析的 JSON
+                  updateLastMessageParsedJSON(jsonData);
+                  // 保存原始 JSON 字符串
+                  updateLastMessageRawJSON(rawContent);
+                  // 提取 location 和 time
+                  const updates: Partial<ChatState> = {};
+                  if (typeof jsonData.location === 'string') {
+                    updates.lastLocation = jsonData.location;
+                  }
+                  if (typeof jsonData.time === 'string') {
+                    updates.lastTime = jsonData.time;
+                  }
+                  if (updates.lastLocation || updates.lastTime) {
+                    set(updates);
+                  }
+                } else {
+                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取字段
                   const partialMessage = extractMessageFromPartialJSON(rawContent);
                   if (partialMessage !== null) {
                     displayContent = partialMessage;
@@ -399,6 +495,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   } else if (lastParsedMessage) {
                     // 正则也提取不到，使用上次成功提取的内容
                     displayContent = lastParsedMessage;
+                  }
+                  // 尝试从部分 JSON 中提取 actions
+                  const partialActions = extractActionsFromPartialJSON(rawContent);
+                  if (partialActions) {
+                    updateLastMessageActions(partialActions);
                   }
                   // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
                 }
@@ -420,6 +521,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updateLastMessage(`重新生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
+      // 流式结束后，最终尝试提取 actions（确保 markdown 代码块包裹的 JSON 也能被解析）
+      if (rawContent) {
+        const finalJson = tryParseJSONFromContent(rawContent);
+        if (finalJson) {
+          if (Array.isArray(finalJson.actions)) {
+            const actions = finalJson.actions.filter((a: unknown) => typeof a === 'string') as string[];
+            if (actions.length > 0) {
+              updateLastMessageActions(actions);
+            }
+          }
+          if (!get().messages[get().messages.length - 1]?.parsedJSON) {
+            updateLastMessageParsedJSON(finalJson);
+          }
+          if (!get().messages[get().messages.length - 1]?.rawJSON) {
+            updateLastMessageRawJSON(rawContent);
+          }
+        } else {
+          // 最终尝试从部分 JSON 提取 actions
+          const partialActions = extractActionsFromPartialJSON(rawContent);
+          if (partialActions && partialActions.length > 0) {
+            updateLastMessageActions(partialActions);
+          }
+        }
+      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },
@@ -559,37 +684,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
                 // 尝试解析 JSON，提取 message 字段进行流式展示
                 let displayContent = rawContent;
-                try {
-                  const jsonData = JSON.parse(rawContent);
-                  if (jsonData && typeof jsonData === 'object') {
-                    // 提取 message 字段用于流式展示
-                    if (typeof jsonData.message === 'string') {
-                      displayContent = jsonData.message;
-                      lastParsedMessage = jsonData.message;
-                    }
-                    // 提取 actions 字段
-                    if (Array.isArray(jsonData.actions)) {
-                      const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
-                      updateLastMessageActions(actions);
-                    }
-                    // 保存完整解析的 JSON
-                    updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
-                    // 保存原始 JSON 字符串
-                    updateLastMessageRawJSON(rawContent);
-                    // 提取 location 和 time
-                    const updates: Partial<ChatState> = {};
-                    if (typeof jsonData.location === 'string') {
-                      updates.lastLocation = jsonData.location;
-                    }
-                    if (typeof jsonData.time === 'string') {
-                      updates.lastTime = jsonData.time;
-                    }
-                    if (updates.lastLocation || updates.lastTime) {
-                      set(updates);
-                    }
+                const jsonData = tryParseJSONFromContent(rawContent);
+                if (jsonData) {
+                  // 提取 message 字段用于流式展示
+                  if (typeof jsonData.message === 'string') {
+                    displayContent = jsonData.message;
+                    lastParsedMessage = jsonData.message;
                   }
-                } catch {
-                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取 message 字段
+                  // 提取 actions 字段
+                  if (Array.isArray(jsonData.actions)) {
+                    const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
+                    updateLastMessageActions(actions);
+                  }
+                  // 保存完整解析的 JSON
+                  updateLastMessageParsedJSON(jsonData);
+                  // 保存原始 JSON 字符串
+                  updateLastMessageRawJSON(rawContent);
+                  // 提取 location 和 time
+                  const updates: Partial<ChatState> = {};
+                  if (typeof jsonData.location === 'string') {
+                    updates.lastLocation = jsonData.location;
+                  }
+                  if (typeof jsonData.time === 'string') {
+                    updates.lastTime = jsonData.time;
+                  }
+                  if (updates.lastLocation || updates.lastTime) {
+                    set(updates);
+                  }
+                } else {
+                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取字段
                   const partialMessage = extractMessageFromPartialJSON(rawContent);
                   if (partialMessage !== null) {
                     displayContent = partialMessage;
@@ -597,6 +720,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   } else if (lastParsedMessage) {
                     // 正则也提取不到，使用上次成功提取的内容
                     displayContent = lastParsedMessage;
+                  }
+                  // 尝试从部分 JSON 中提取 actions
+                  const partialActions = extractActionsFromPartialJSON(rawContent);
+                  if (partialActions) {
+                    updateLastMessageActions(partialActions);
                   }
                   // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
                 }
@@ -619,6 +747,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updateLastMessage(`发送失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
+      // 流式结束后，最终尝试提取 actions（确保 markdown 代码块包裹的 JSON 也能被解析）
+      if (rawContent) {
+        const finalJson = tryParseJSONFromContent(rawContent);
+        if (finalJson) {
+          if (Array.isArray(finalJson.actions)) {
+            const actions = finalJson.actions.filter((a: unknown) => typeof a === 'string') as string[];
+            if (actions.length > 0) {
+              updateLastMessageActions(actions);
+            }
+          }
+          if (!get().messages[get().messages.length - 1]?.parsedJSON) {
+            updateLastMessageParsedJSON(finalJson);
+          }
+          if (!get().messages[get().messages.length - 1]?.rawJSON) {
+            updateLastMessageRawJSON(rawContent);
+          }
+        } else {
+          // 最终尝试从部分 JSON 提取 actions
+          const partialActions = extractActionsFromPartialJSON(rawContent);
+          if (partialActions && partialActions.length > 0) {
+            updateLastMessageActions(partialActions);
+          }
+        }
+      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },

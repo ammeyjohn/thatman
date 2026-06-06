@@ -6,13 +6,17 @@ Skills Package - Agents 技能模块
 Available Skills:
     - read_doc: 读取文档文件内容
     - find_skill: 查找和列出可用的 skills
+    - search_episode: 查询相似剧情片段
+    - couchdb_skill: CouchDB 读写技能（玩家/实体/关系/世界快照）
+    - memory_skill: 长效记忆技能（召回/保存记忆）
+    - vector_skill: Qdrant 剧情向量技能（检索/入库剧情）
 
 Usage:
     from skills import read_doc, find_skill
-    
+
     # 读取文档
     result = read_doc.read_doc("world_config.md")
-    
+
     # 查找 skills
     skills = find_skill.list_all_skills()
 """
@@ -20,5 +24,15 @@ Usage:
 from . import read_doc
 from . import find_skill
 from . import search_episode
+from . import couchdb_skill
+from . import memory_skill
+from . import vector_skill
 
-__all__ = ["read_doc", "find_skill", "search_episode"]
+__all__ = [
+    "read_doc",
+    "find_skill",
+    "search_episode",
+    "couchdb_skill",
+    "memory_skill",
+    "vector_skill",
+]

@@ -84,258 +84,308 @@
       }
     },
     {
-      "name": "couch_get_player",
-      "description": "查询玩家全档案，返回玩家的完整数据",
-      "module": "gm_storage",
-      "category": "player",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_get_player",
+      "name": "couchdb_skill",
+      "description": "CouchDB 读写技能，封装玩家、实体、关系、世界快照的读写操作",
+      "module": "skills.couchdb_skill",
+      "category": "storage",
+      "functions": {
+        "couch_get_player": {
           "description": "查询玩家全档案，返回玩家的完整数据",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "uid": {"type": "string", "description": "玩家唯一标识"}
-            },
-            "required": ["uid"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_save_player",
-      "description": "保存玩家变更数据，新增或更新玩家档案",
-      "module": "gm_storage",
-      "category": "player",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_save_player",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, uid, data, error 的字典"
+        },
+        "couch_save_player": {
           "description": "保存玩家变更数据，新增或更新玩家档案",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "uid": {"type": "string", "description": "玩家唯一标识"},
-              "data": {"type": "object", "description": "玩家变更后的完整数据"}
-            },
-            "required": ["uid", "data"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_get_entity",
-      "description": "按实体ID查询实体详情，如NPC、装备、区域等",
-      "module": "gm_storage",
-      "category": "entity",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_get_entity",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "data": {"type": "object", "description": "玩家变更后的完整数据", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, uid, rev, error 的字典"
+        },
+        "couch_get_entity": {
           "description": "按实体ID查询实体详情，如NPC、装备、区域等",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "entity_id": {"type": "string", "description": "实体唯一标识"}
-            },
-            "required": ["entity_id"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_save_entity",
-      "description": "新增或修改实体数据",
-      "module": "gm_storage",
-      "category": "entity",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_save_entity",
+          "params": {
+            "entity_id": {"type": "string", "description": "实体唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, entity_id, data, error 的字典"
+        },
+        "couch_save_entity": {
           "description": "新增或修改实体数据",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "entity_id": {"type": "string", "description": "实体唯一标识"},
-              "entity_data": {"type": "object", "description": "实体变更后的完整数据"}
-            },
-            "required": ["entity_id", "entity_data"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_get_link",
-      "description": "查询指定目标ID和关系类型的关联关系",
-      "module": "gm_storage",
-      "category": "relation",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_get_link",
+          "params": {
+            "entity_id": {"type": "string", "description": "实体唯一标识", "required": true},
+            "entity_data": {"type": "object", "description": "实体变更后的完整数据", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, entity_id, rev, error 的字典"
+        },
+        "couch_get_link": {
           "description": "查询指定目标ID和关系类型的关联关系",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "target_id": {"type": "string", "description": "目标实体ID"},
-              "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等"}
-            },
-            "required": ["target_id", "rel_type"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_save_link",
-      "description": "新增两个实体之间的关系",
-      "module": "gm_storage",
-      "category": "relation",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_save_link",
+          "params": {
+            "target_id": {"type": "string", "description": "目标实体ID", "required": true},
+            "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等", "required": false, "default": ""}
+          },
+          "returns": "Dict[str, Any] - 包含 success, target_id, rel_type, total, docs, error 的字典"
+        },
+        "couch_save_link": {
           "description": "新增两个实体之间的关系",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "from_id": {"type": "string", "description": "关系起点实体ID"},
-              "to_id": {"type": "string", "description": "关系终点实体ID"},
-              "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等"},
-              "desc": {"type": "string", "description": "关系描述"}
-            },
-            "required": ["from_id", "to_id", "rel_type", "desc"]
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_get_last_world_snap",
-      "description": "获取上一轮世界存档快照",
-      "module": "gm_storage",
-      "category": "world",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_get_last_world_snap",
+          "params": {
+            "from_id": {"type": "string", "description": "关系起点实体ID", "required": true},
+            "to_id": {"type": "string", "description": "关系终点实体ID", "required": true},
+            "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等", "required": true},
+            "desc": {"type": "string", "description": "关系描述", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, from_id, to_id, rel_type, rev, error 的字典"
+        },
+        "couch_get_last_world_snap": {
           "description": "获取上一轮世界存档快照",
-          "parameters": {
-            "type": "object",
-            "properties": {}
-          }
-        }
-      }
-    },
-    {
-      "name": "couch_save_world_snap",
-      "description": "保存新的世界快照存档",
-      "module": "gm_storage",
-      "category": "world",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "couch_save_world_snap",
+          "params": {},
+          "returns": "Dict[str, Any] - 包含 success, data, error 的字典"
+        },
+        "couch_save_world_snap": {
           "description": "保存新的世界快照存档",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "snap_data": {"type": "object", "description": "世界快照数据"}
-            },
-            "required": ["snap_data"]
+          "params": {
+            "snap_data": {"type": "object", "description": "世界快照数据", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, doc_id, rev, error 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_get_player",
+            "description": "查询玩家全档案，返回玩家的完整数据",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"}
+              },
+              "required": ["uid"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_save_player",
+            "description": "保存玩家变更数据，新增或更新玩家档案",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "data": {"type": "object", "description": "玩家变更后的完整数据"}
+              },
+              "required": ["uid", "data"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_get_entity",
+            "description": "按实体ID查询实体详情，如NPC、装备、区域等",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "entity_id": {"type": "string", "description": "实体唯一标识"}
+              },
+              "required": ["entity_id"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_save_entity",
+            "description": "新增或修改实体数据",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "entity_id": {"type": "string", "description": "实体唯一标识"},
+                "entity_data": {"type": "object", "description": "实体变更后的完整数据"}
+              },
+              "required": ["entity_id", "entity_data"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_get_link",
+            "description": "查询指定目标ID和关系类型的关联关系",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target_id": {"type": "string", "description": "目标实体ID"},
+                "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等"}
+              },
+              "required": ["target_id", "rel_type"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_save_link",
+            "description": "新增两个实体之间的关系",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "from_id": {"type": "string", "description": "关系起点实体ID"},
+                "to_id": {"type": "string", "description": "关系终点实体ID"},
+                "rel_type": {"type": "string", "description": "关系类型，如 owns、belongs_to、located_in 等"},
+                "desc": {"type": "string", "description": "关系描述"}
+              },
+              "required": ["from_id", "to_id", "rel_type", "desc"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_get_last_world_snap",
+            "description": "获取上一轮世界存档快照",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "couch_save_world_snap",
+            "description": "保存新的世界快照存档",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "snap_data": {"type": "object", "description": "世界快照数据"}
+              },
+              "required": ["snap_data"]
+            }
           }
         }
-      }
+      ]
     },
     {
-      "name": "recall_all_memory",
-      "description": "合并召回个人记忆和世界记忆，返回与查询相关的记忆内容",
-      "module": "gm_storage",
+      "name": "memory_skill",
+      "description": "长效记忆技能，合并召回个人记忆和世界记忆，支持记忆保存",
+      "module": "skills.memory_skill",
       "category": "memory",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "recall_all_memory",
+      "functions": {
+        "recall_all_memory": {
           "description": "合并召回个人记忆和世界记忆，返回与查询相关的记忆内容",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "uid": {"type": "string", "description": "玩家唯一标识"},
-              "query": {"type": "string", "description": "记忆检索查询文本"}
-            },
-            "required": ["uid", "query"]
-          }
-        }
-      }
-    },
-    {
-      "name": "save_memory",
-      "description": "保存记忆，namespace 为 user_{uid} 或 world_global_history",
-      "module": "gm_storage",
-      "category": "memory",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "save_memory",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "query": {"type": "string", "description": "记忆检索查询文本", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, uid, query, memory_text, error 的字典"
+        },
+        "save_memory": {
           "description": "保存记忆，namespace 为 user_{uid} 或 world_global_history",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "namespace": {"type": "string", "description": "记忆命名空间，如 user_{uid} 或 world_global_history"},
-              "summary": {"type": "string", "description": "记忆摘要内容"}
-            },
-            "required": ["namespace", "summary"]
+          "params": {
+            "namespace": {"type": "string", "description": "记忆命名空间，如 user_{uid} 或 world_global_history", "required": true},
+            "summary": {"type": "string", "description": "记忆摘要内容", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, namespace, error 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "recall_all_memory",
+            "description": "合并召回个人记忆和世界记忆，返回与查询相关的记忆内容",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "query": {"type": "string", "description": "记忆检索查询文本"}
+              },
+              "required": ["uid", "query"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "save_memory",
+            "description": "保存记忆，namespace 为 user_{uid} 或 world_global_history",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "namespace": {"type": "string", "description": "记忆命名空间，如 user_{uid} 或 world_global_history"},
+                "summary": {"type": "string", "description": "记忆摘要内容"}
+              },
+              "required": ["namespace", "summary"]
+            }
           }
         }
-      }
+      ]
     },
     {
-      "name": "search_plot_vector",
-      "description": "语义检索过往剧情，返回与查询最相似的剧情片段",
-      "module": "gm_storage",
+      "name": "vector_skill",
+      "description": "Qdrant 剧情向量技能，语义检索过往剧情和剧情入库",
+      "module": "skills.vector_skill",
       "category": "vector",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "search_plot_vector",
+      "functions": {
+        "search_plot_vector": {
           "description": "语义检索过往剧情，返回与查询最相似的剧情片段",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "query": {"type": "string", "description": "语义检索查询文本"},
-              "top_k": {"type": "integer", "description": "返回最相似的 top_k 条结果，默认3", "default": 3}
-            },
-            "required": ["query"]
-          }
-        }
-      }
-    },
-    {
-      "name": "insert_plot_vector",
-      "description": "将剧情内容入库，支持 NPC、装备、区域、阵营等类型",
-      "module": "gm_storage",
-      "category": "vector",
-      "tool_schema": {
-        "type": "function",
-        "function": {
-          "name": "insert_plot_vector",
+          "params": {
+            "query": {"type": "string", "description": "语义检索查询文本", "required": true},
+            "top_k": {"type": "integer", "description": "返回最相似的 top_k 条结果，默认3", "required": false, "default": 3}
+          },
+          "returns": "Dict[str, Any] - 包含 success, query, total, episodes, error 的字典"
+        },
+        "insert_plot_vector": {
           "description": "将剧情内容入库，支持 NPC、装备、区域、阵营等类型",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "content": {"type": "string", "description": "剧情文本内容"},
-              "meta": {
-                "type": "object",
-                "description": "剧情元数据，包含 type(npc/equip/area/faction) 和 area(地域名)",
-                "properties": {
-                  "type": {"type": "string", "description": "类型：npc / equip / area / faction"},
-                  "area": {"type": "string", "description": "地域名"}
+          "params": {
+            "content": {"type": "string", "description": "剧情文本内容", "required": true},
+            "meta": {"type": "object", "description": "剧情元数据，包含 type(npc/equip/area/faction) 和 area(地域名)", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, point_id, error 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "search_plot_vector",
+            "description": "语义检索过往剧情，返回与查询最相似的剧情片段",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {"type": "string", "description": "语义检索查询文本"},
+                "top_k": {"type": "integer", "description": "返回最相似的 top_k 条结果，默认3", "default": 3}
+              },
+              "required": ["query"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "insert_plot_vector",
+            "description": "将剧情内容入库，支持 NPC、装备、区域、阵营等类型",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {"type": "string", "description": "剧情文本内容"},
+                "meta": {
+                  "type": "object",
+                  "description": "剧情元数据，包含 type(npc/equip/area/faction) 和 area(地域名)",
+                  "properties": {
+                    "type": {"type": "string", "description": "类型：npc / equip / area / faction"},
+                    "area": {"type": "string", "description": "地域名"}
+                  }
                 }
-              }
-            },
-            "required": ["content", "meta"]
+              },
+              "required": ["content", "meta"]
+            }
           }
         }
-      }
+      ]
     }
   ]
 }

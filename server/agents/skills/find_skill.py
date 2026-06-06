@@ -113,6 +113,110 @@ SKILL_DESCRIPTIONS = {
             },
         },
     },
+    "couchdb_skill": {
+        "name": "couchdb_skill",
+        "description": "CouchDB 读写技能，封装玩家、实体、关系、世界快照的读写操作",
+        "functions": {
+            "couch_get_player": {
+                "description": "查询玩家全档案，返回玩家的完整数据",
+                "params": ["uid: str - 玩家唯一标识"],
+                "returns": "Dict[str, Any] - 包含 success, uid, data, error 的字典",
+            },
+            "couch_save_player": {
+                "description": "保存玩家变更数据，新增或更新玩家档案",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "data: dict - 玩家变更后的完整数据",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, uid, rev, error 的字典",
+            },
+            "couch_get_entity": {
+                "description": "按实体ID查询实体详情，如NPC、装备、区域等",
+                "params": ["entity_id: str - 实体唯一标识"],
+                "returns": "Dict[str, Any] - 包含 success, entity_id, data, error 的字典",
+            },
+            "couch_save_entity": {
+                "description": "新增或修改实体数据",
+                "params": [
+                    "entity_id: str - 实体唯一标识",
+                    "entity_data: dict - 实体变更后的完整数据",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, entity_id, rev, error 的字典",
+            },
+            "couch_get_link": {
+                "description": "查询指定目标ID和关系类型的关联关系",
+                "params": [
+                    "target_id: str - 目标实体ID",
+                    "rel_type: str - 关系类型，如 owns、belongs_to、located_in 等",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, target_id, rel_type, total, docs, error 的字典",
+            },
+            "couch_save_link": {
+                "description": "新增两个实体之间的关系",
+                "params": [
+                    "from_id: str - 关系起点实体ID",
+                    "to_id: str - 关系终点实体ID",
+                    "rel_type: str - 关系类型",
+                    "desc: str - 关系描述",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, from_id, to_id, rel_type, rev, error 的字典",
+            },
+            "couch_get_last_world_snap": {
+                "description": "获取上一轮世界存档快照",
+                "params": [],
+                "returns": "Dict[str, Any] - 包含 success, data, error 的字典",
+            },
+            "couch_save_world_snap": {
+                "description": "保存新的世界快照存档",
+                "params": ["snap_data: dict - 世界快照数据"],
+                "returns": "Dict[str, Any] - 包含 success, doc_id, rev, error 的字典",
+            },
+        },
+    },
+    "memory_skill": {
+        "name": "memory_skill",
+        "description": "长效记忆技能，合并召回个人记忆和世界记忆，支持记忆保存",
+        "functions": {
+            "recall_all_memory": {
+                "description": "合并召回个人记忆和世界记忆，返回与查询相关的记忆内容",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "query: str - 记忆检索查询文本",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, uid, query, memory_text, error 的字典",
+            },
+            "save_memory": {
+                "description": "保存记忆，namespace 为 user_{uid} 或 world_global_history",
+                "params": [
+                    "namespace: str - 记忆命名空间，如 user_{uid} 或 world_global_history",
+                    "summary: str - 记忆摘要内容",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, namespace, error 的字典",
+            },
+        },
+    },
+    "vector_skill": {
+        "name": "vector_skill",
+        "description": "Qdrant 剧情向量技能，语义检索过往剧情和剧情入库",
+        "functions": {
+            "search_plot_vector": {
+                "description": "语义检索过往剧情，返回与查询最相似的剧情片段",
+                "params": [
+                    "query: str - 语义检索查询文本",
+                    "top_k: int - 返回最相似的 top_k 条结果，默认3",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, query, total, episodes, error 的字典",
+            },
+            "insert_plot_vector": {
+                "description": "将剧情内容入库，支持 NPC、装备、区域、阵营等类型",
+                "params": [
+                    "content: str - 剧情文本内容",
+                    "meta: dict - 剧情元数据，包含 type(npc/equip/area/faction) 和 area(地域名)",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, point_id, error 的字典",
+            },
+        },
+    },
 }
 
 
