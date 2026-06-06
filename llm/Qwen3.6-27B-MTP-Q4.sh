@@ -1,6 +1,6 @@
 llama-server \
   -m "$MODELSCOPE/unsloth/Qwen3___6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf" \
-  --port 7778 \
+  --port 7779 \
   --host 0.0.0.0 \
   -ngl 99 \
   -c 65536 \
