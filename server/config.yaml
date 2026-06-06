@@ -51,9 +51,9 @@ gm:
   # CouchDB 配置
   couchdb:
     url: http://localhost:5984
-    db_prefix: game_
-    user: null
-    password: null
+    db_prefix: thatman_
+    user: admin
+    password: Admin@123456
   # Qdrant 配置
   qdrant:
     url: http://localhost:6333

@@ -11,8 +11,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       HINDSIGHT_API_LLM_PROVIDER: openai
-      HINDSIGHT_API_LLM_MODEL: Qwen3.6-27B-MTP-Q4
-      HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7779/v1
+      HINDSIGHT_API_LLM_MODEL: Qwen3.6-35B-A3B-MTP-Q4
+      HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
       # HINDSIGHT_API_LLM_BASE_URL: http://128.1.1.48:7778/v1
       HINDSIGHT_API_LLM_API_KEY: dummy
       HF_ENDPOINT: https://hf-mirror.com
