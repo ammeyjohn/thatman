@@ -1,0 +1,295 @@
+"""
+Layout Generator - 面板布局生成模块
+
+调用 Qwen3-Coder-Next-Q4 模型，根据角色/世界数据动态生成面板展示布局。
+生成时参考旧布局，进行增量更新，确保风格符合 DESIGN.md 规范。
+"""
+
+import json
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+
+import yaml
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+
+from gm_storage import GMStorage
+from gm_logger import debug_log, info_log, warn_log, error_log
+
+# 配置日志
+logger = logging.getLogger(__name__)
+
+
+class LayoutGenerator:
+    """面板布局生成器，调用 LLM 动态生成面板布局"""
+
+    def __init__(self, config: Dict[str, Any], storage: GMStorage):
+        """
+       初始化 LayoutGenerator
+
+        Args:
+            config: 配置字典
+            storage: GMStorage 实例
+        """
+        self.config = config
+        self.storage = storage
+
+        # 加载布局生成模型
+        self.layout_model: Optional[ChatOpenAI] = None
+        self._init_layout_model()
+
+        # 加载布局生成 system prompt
+        self.system_prompt: str = ""
+        self._load_system_prompt()
+
+        info_log("LayoutGenerator 初始化完成")
+
+    def _init_layout_model(self) -> None:
+        """初始化布局生成模型"""
+        gm_cfg = self.config.get("gm", {})
+        layout_cfg = gm_cfg.get("layout_model", {})
+
+        api_base = os.getenv("GM_LAYOUT_API_BASE", layout_cfg.get("api_base", "http://localhost:7777/v1"))
+        api_key = os.getenv("GM_LAYOUT_API_KEY", layout_cfg.get("api_key", "not-needed"))
+        model_name = os.getenv("GM_LAYOUT_MODEL_NAME", layout_cfg.get("model_name", "Qwen3-Coder-Next-Q4"))
+        temperature = float(os.getenv("GM_LAYOUT_TEMPERATURE", layout_cfg.get("temperature", 0.3)))
+        max_tokens = int(os.getenv("GM_LAYOUT_MAX_TOKENS", layout_cfg.get("max_tokens", 4096)))
+
+        try:
+            self.layout_model = ChatOpenAI(
+                base_url=api_base,
+                api_key=api_key,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                model_kwargs={"response_format": {"type": "json_object"}},
+            )
+            info_log(f"布局生成模型初始化成功 - 模型: {model_name}, API: {api_base}")
+        except Exception as e:
+            error_log(f"布局生成模型初始化失败: {e}")
+            raise
+
+    def _load_system_prompt(self) -> None:
+        """加载布局生成 system prompt"""
+        prompt_path = Path(__file__).parent / "prompts" / "layout_system.md"
+        if prompt_path.exists():
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    self.system_prompt = f.read()
+                debug_log(f"加载布局 system prompt: {prompt_path}")
+            except Exception as e:
+                error_log(f"加载布局 system prompt 失败: {e}")
+                self.system_prompt = "你是面板布局生成器，根据数据生成面板布局JSON。"
+        else:
+            warn_log(f"布局 system prompt 文件不存在: {prompt_path}")
+            self.system_prompt = "你是面板布局生成器，根据数据生成面板布局JSON。"
+
+    def generate_layout(
+        self,
+        uid: str,
+        panel_type: str,
+        current_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        生成面板布局
+
+        流程：读取旧布局 -> 构建提示 -> 调用 LLM -> 解析 JSON -> 保存 -> 返回
+
+        Args:
+            uid: 玩家唯一标识
+            panel_type: 面板类型，"character" 或 "world"
+            current_data: 当前角色或世界数据
+
+        Returns:
+            生成结果字典，包含 panel_type、layout、version
+        """
+        info_log(f"开始生成布局: uid={uid}, panel_type={panel_type}")
+        debug_log(f"[generate_layout] 当前数据字段: {list(current_data.keys()) if isinstance(current_data, dict) else 'not_dict'}")
+
+        try:
+            # 1. 读取旧布局
+            old_layout = {}
+            if self.storage:
+                old_layout = self.storage.couch_get_layout(uid, panel_type)
+                if old_layout:
+                    # 移除 CouchDB 内部字段
+                    old_layout.pop("_id", None)
+                    old_layout.pop("_rev", None)
+                    old_layout.pop("uid", None)
+                    old_layout.pop("panel_type", None)
+                    old_layout.pop("created_at", None)
+                    old_layout.pop("updated_at", None)
+                    debug_log(f"[generate_layout] 读取旧布局成功: sections数={len(old_layout.get('layout', {}).get('sections', []))}")
+                else:
+                    debug_log("[generate_layout] 无旧布局")
+
+            # 2. 构建提示
+            messages = self._build_layout_prompt(panel_type, old_layout, current_data)
+            debug_log(f"[generate_layout] 构建提示完成: messages数={len(messages)}")
+
+            # 3. 调用 LLM
+            if not self.layout_model:
+                error_log("布局生成模型未初始化")
+                return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+
+            langchain_messages = []
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    langchain_messages.append(SystemMessage(content=content))
+                else:
+                    langchain_messages.append(HumanMessage(content=content))
+
+            debug_log("[generate_layout] 开始调用 LLM")
+            ai_message = self.layout_model.invoke(langchain_messages)
+            content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+            debug_log(f"[generate_layout] LLM 响应完成: content长度={len(content)}")
+
+            # 4. 解析 JSON
+            layout = self._parse_layout_response(content)
+            if not layout or not layout.get("sections"):
+                warn_log("布局生成结果为空或无 sections")
+                return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+
+            debug_log(f"[generate_layout] 解析布局成功: sections数={len(layout.get('sections', []))}")
+
+            # 5. 保存到 CouchDB
+            version = uuid.uuid4().hex[:8]
+            layout_doc = {
+                "layout": layout,
+                "version": version,
+            }
+
+            if self.storage:
+                self.storage.couch_save_layout(uid, panel_type, layout_doc)
+                info_log(f"布局保存成功: uid={uid}, panel_type={panel_type}, version={version}")
+
+            # 6. 返回结果
+            return {
+                "panel_type": panel_type,
+                "layout": layout,
+                "version": version,
+            }
+
+        except Exception as e:
+            error_log(f"生成布局异常: uid={uid}, panel_type={panel_type}, 错误: {e}")
+            return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+
+    def _build_layout_prompt(
+        self,
+        panel_type: str,
+        old_layout: Dict[str, Any],
+        current_data: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        """
+        构建布局生成请求的 messages
+
+        Args:
+            panel_type: 面板类型
+            old_layout: 旧布局数据
+            current_data: 当前角色/世界数据
+
+        Returns:
+            消息列表
+        """
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": self.system_prompt},
+        ]
+
+        # 构建用户提示
+        user_parts = []
+
+        # 面板类型
+        user_parts.append(f"请生成【{panel_type}】面板的布局。")
+
+        # 当前数据
+        if current_data:
+            # 过滤掉空值字段
+            filtered_data = {}
+            for key, value in current_data.items():
+                if value is not None and value != "" and value != 0 and value != [] and value != {}:
+                    filtered_data[key] = value
+
+            if filtered_data:
+                user_parts.append(f"\n当前数据：\n{json.dumps(filtered_data, ensure_ascii=False, indent=2)}")
+
+        # 旧布局参考
+        if old_layout and old_layout.get("layout"):
+            old_layout_str = json.dumps(old_layout["layout"], ensure_ascii=False, indent=2)
+            user_parts.append(f"\n旧布局参考（保留仍有效的结构，仅调整变化部分）：\n{old_layout_str}")
+
+        # 生成指令
+        user_parts.append("\n请根据以上信息生成新的面板布局JSON。注意：当前数据中不存在的字段不要在布局中显示。")
+
+        messages.append({"role": "user", "content": "\n".join(user_parts)})
+
+        debug_log(f"[build_layout_prompt] 用户提示长度: {len(messages[-1]['content'])}")
+
+        return messages
+
+    def _parse_layout_response(self, content: str) -> Dict[str, Any]:
+        """
+        解析 LLM 返回的布局 JSON
+
+        Args:
+            content: LLM 返回的文本内容
+
+        Returns:
+            解析后的布局字典，失败返回空字典
+        """
+        if not content or not content.strip():
+            warn_log("LLM 返回内容为空")
+            return {}
+
+        # 尝试提取 markdown 代码块中的 JSON
+        text = content.strip()
+        if "```json" in text:
+            start = text.find("```json") + len("```json")
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + len("```")
+            end = text.find("```", start)
+            if end > start:
+                text = text[start:end].strip()
+
+        try:
+            result = json.loads(text)
+            if isinstance(result, dict) and "sections" in result:
+                debug_log("布局 JSON 解析成功")
+                return result
+            else:
+                warn_log(f"布局 JSON 格式不符合预期: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+                return {}
+        except json.JSONDecodeError as e:
+            warn_log(f"布局 JSON 解析失败: {e}, 原始内容: {content[:200]}")
+            return {}
+
+
+# ================================================================
+# 全局实例缓存（单例模式）
+# ================================================================
+
+_layout_generator: Optional[LayoutGenerator] = None
+
+
+def get_layout_generator(config: Dict[str, Any], storage: GMStorage) -> LayoutGenerator:
+    """
+    获取 LayoutGenerator 单例
+
+    Args:
+        config: 配置字典
+        storage: GMStorage 实例
+
+    Returns:
+        LayoutGenerator 实例
+    """
+    global _layout_generator
+    if _layout_generator is None:
+        _layout_generator = LayoutGenerator(config, storage)
+    return _layout_generator

@@ -12,6 +12,7 @@ if str(agents_path) not in sys.path:
 
 from game_master import GameMaster
 from gm_logger import debug_log, info_log, error_log
+from layout_generator import LayoutGenerator, get_layout_generator
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -407,6 +408,163 @@ def init_user():
             })
     except Exception as e:
         error_log(f"初始化用户失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/generate-layout', methods=['POST'])
+def generate_layout():
+    """
+    生成面板布局接口
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)",
+        "panel_type": "character | world",
+        "current_data": {}
+    }
+
+    响应格式:
+    {
+        "panel_type": "character | world",
+        "layout": { "sections": [...] },
+        "version": "string"
+    }
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+    panel_type = data.get('panel_type', '')
+    current_data = data.get('current_data', {})
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if panel_type not in ('character', 'world'):
+        return jsonify({
+            'error': {
+                'message': 'panel_type 必须为 character 或 world',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        gm = get_gm()
+        storage = gm.storage
+
+        if not storage:
+            return jsonify({
+                'error': {
+                    'message': '存储层不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        # 获取 LayoutGenerator 实例
+        layout_gen = get_layout_generator(gm.config, storage)
+
+        # 如果未提供 current_data，从数据库获取
+        if not current_data:
+            if panel_type == 'character':
+                current_data = storage.couch_get_player(uid)
+                # 移除 CouchDB 内部字段
+                current_data.pop('_id', None)
+                current_data.pop('_rev', None)
+            else:
+                # 世界数据从最新快照获取
+                current_data = storage.couch_get_last_world_snap()
+                current_data.pop('_id', None)
+                current_data.pop('_rev', None)
+
+        info_log(f"生成布局请求: uid={uid}, panel_type={panel_type}")
+
+        result = layout_gen.generate_layout(uid, panel_type, current_data)
+
+        return jsonify(result)
+
+    except Exception as e:
+        error_log(f"生成布局失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/layout', methods=['GET'])
+def get_layout():
+    """
+    获取已保存的面板布局
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+        panel_type: 面板类型，character 或 world（必填）
+    """
+    uid = request.args.get('uid', '')
+    panel_type = request.args.get('panel_type', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if panel_type not in ('character', 'world'):
+        return jsonify({
+            'error': {
+                'message': 'panel_type 必须为 character 或 world',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        layout_data = storage.couch_get_layout(uid, panel_type)
+
+        if not layout_data or '_id' not in layout_data:
+            # 布局不存在，返回默认空布局
+            return jsonify({
+                'panel_type': panel_type,
+                'layout': {'sections': []},
+                'version': '',
+            })
+
+        # 移除 CouchDB 内部字段
+        layout_data.pop('_id', None)
+        layout_data.pop('_rev', None)
+
+        return jsonify(layout_data)
+
+    except Exception as e:
+        error_log(f"获取布局失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

@@ -48,6 +48,13 @@ gm:
     model_name: Qwen3.6-27B-MTP
     temperature: 0.7
     max_tokens: 8192
+  # 布局生成模型（Qwen3-Coder-Next-Q4，用于动态生成面板布局）
+  layout_model:
+    api_base: http://localhost:7777/v1
+    api_key: not-needed
+    model_name: Qwen3-Coder-Next-Q4
+    temperature: 0.3
+    max_tokens: 4096
   # CouchDB 配置
   couchdb:
     url: http://localhost:5984

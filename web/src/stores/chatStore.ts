@@ -195,6 +195,18 @@ function applyGmResponseToGameStore(
       gameStore.updateWorld(worldUpdates);
     }
   }
+
+  // 处理 layout_hint
+  const layoutHint = uiConfig.layout_hint as string | undefined;
+  if (layoutHint && layoutHint !== '') {
+    const { generateLayout } = useGameStore.getState();
+    if (layoutHint === 'character' || layoutHint === 'both') {
+      generateLayout('character');
+    }
+    if (layoutHint === 'world' || layoutHint === 'both') {
+      generateLayout('world');
+    }
+  }
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({

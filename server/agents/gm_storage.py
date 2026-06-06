@@ -83,6 +83,7 @@ class GMStorage:
         self._db_links: str = f"{self._couch_db_prefix}links"
         self._db_world_snaps: str = f"{self._couch_db_prefix}world_snaps"
         self._db_chat_history: str = f"{self._couch_db_prefix}chat_history"
+        self._db_layouts: str = f"{self._couch_db_prefix}layouts"
 
         # 初始化 CouchDB httpx 客户端
         self._couch_client: httpx.Client = httpx.Client(
@@ -123,6 +124,7 @@ class GMStorage:
             self._db_links,
             self._db_world_snaps,
             self._db_chat_history,
+            self._db_layouts,
         ]
         for db_name in db_names:
             try:
@@ -442,6 +444,81 @@ class GMStorage:
                 return {}
         except Exception as e:
             error_log(f"保存世界快照异常: {e}")
+            return {}
+
+    # ================================================================
+    # 布局操作
+    # ================================================================
+
+    def couch_get_layout(self, uid: str, panel_type: str) -> dict:
+        """
+        获取指定用户的面板布局
+
+        Args:
+            uid: 玩家唯一标识
+            panel_type: 面板类型，"character" 或 "world"
+
+        Returns:
+            布局数据字典，失败返回空字典
+        """
+        try:
+            doc_id = f"layout_{uid}_{panel_type}"
+            resp = self._couch_request("GET", f"/{self._db_layouts}/{doc_id}")
+            if resp.status_code == 200:
+                data = resp.json()
+                debug_log(f"获取布局成功: uid={uid}, panel_type={panel_type}")
+                return data
+            elif resp.status_code == 404:
+                debug_log(f"布局不存在: uid={uid}, panel_type={panel_type}")
+                return {}
+            else:
+                warn_log(f"获取布局失败: uid={uid}, panel_type={panel_type}, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"获取布局异常: uid={uid}, panel_type={panel_type}, 错误: {e}")
+            return {}
+
+    def couch_save_layout(self, uid: str, panel_type: str, layout_data: dict) -> dict:
+        """
+        保存/更新面板布局
+
+        如果布局已存在，自动携带 _rev 进行更新。
+
+        Args:
+            uid: 玩家唯一标识
+            panel_type: 面板类型，"character" 或 "world"
+            layout_data: 布局数据
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            doc_id = f"layout_{uid}_{panel_type}"
+
+            # 先查询现有文档获取 _rev
+            existing = self.couch_get_layout(uid, panel_type)
+            if existing and "_rev" in existing:
+                layout_data["_rev"] = existing["_rev"]
+
+            # 设置元数据
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            layout_data["_id"] = doc_id
+            layout_data["uid"] = uid
+            layout_data["panel_type"] = panel_type
+            if "created_at" not in layout_data and not existing:
+                layout_data["created_at"] = now
+            layout_data["updated_at"] = now
+
+            resp = self._couch_request("PUT", f"/{self._db_layouts}/{doc_id}", json_data=layout_data)
+            if resp.status_code in (201, 202):
+                info_log(f"保存布局成功: uid={uid}, panel_type={panel_type}")
+                return resp.json()
+            else:
+                warn_log(f"保存布局失败: uid={uid}, panel_type={panel_type}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存布局异常: uid={uid}, panel_type={panel_type}, 错误: {e}")
             return {}
 
     # ================================================================

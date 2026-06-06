@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState } from '../types';
+import type { CharacterState, WorldState, PanelLayout } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId } from '../lib/user';
 
@@ -8,6 +8,12 @@ interface GameState {
   world: WorldState;
   updateCharacter: (updates: Partial<CharacterState>) => void;
   updateWorld: (updates: Partial<WorldState>) => void;
+  characterLayout: PanelLayout | null;
+  worldLayout: PanelLayout | null;
+  setCharacterLayout: (layout: PanelLayout | null) => void;
+  setWorldLayout: (layout: PanelLayout | null) => void;
+  loadLayout: (panelType: 'character' | 'world') => Promise<void>;
+  generateLayout: (panelType: 'character' | 'world') => Promise<void>;
   loadUserInfo: () => Promise<void>;
 }
 
@@ -68,6 +74,8 @@ const initialWorld: WorldState = {
 export const useGameStore = create<GameState>((set) => ({
   character: initialCharacter,
   world: initialWorld,
+  characterLayout: null,
+  worldLayout: null,
   updateCharacter: (updates) =>
     set((state) => ({
       character: { ...state.character, ...updates },
@@ -76,6 +84,76 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       world: { ...state.world, ...updates },
     })),
+  setCharacterLayout: (layout) => set({ characterLayout: layout }),
+  setWorldLayout: (layout) => set({ worldLayout: layout }),
+
+  loadLayout: async (panelType) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/layout?uid=${encodeURIComponent(uid)}&panel_type=${panelType}`);
+      if (!response.ok) {
+        console.error('获取布局失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (data.layout && data.layout.sections && data.layout.sections.length > 0) {
+        if (panelType === 'character') {
+          set({ characterLayout: data.layout });
+        } else {
+          set({ worldLayout: data.layout });
+        }
+        console.log(`[Layout] ${panelType} 布局加载成功`);
+      } else {
+        // 无已保存布局，自动生成
+        console.log(`[Layout] ${panelType} 无已保存布局，开始生成`);
+        const { generateLayout } = useGameStore.getState();
+        generateLayout(panelType);
+      }
+    } catch (error) {
+      console.error('加载布局失败:', error);
+    }
+  },
+
+  generateLayout: async (panelType) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const gameState = useGameStore.getState();
+      const currentData = panelType === 'character' ? gameState.character : gameState.world;
+
+      const response = await fetch(`${config.API_BASE_URL}/gm/generate-layout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid,
+          panel_type: panelType,
+          current_data: currentData,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('生成布局失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (data.layout) {
+        if (panelType === 'character') {
+          set({ characterLayout: data.layout });
+        } else {
+          set({ worldLayout: data.layout });
+        }
+        console.log(`[Layout] ${panelType} 布局生成成功`);
+      }
+    } catch (error) {
+      console.error('生成布局失败:', error);
+    }
+  },
+
   loadUserInfo: async () => {
     const uid = getOrCreateUserId();
     if (!uid) return;
@@ -143,6 +221,11 @@ export const useGameStore = create<GameState>((set) => ({
       }
 
       console.log('[UserInfo] 用户信息加载成功');
+
+      // 加载布局
+      const { loadLayout } = useGameStore.getState();
+      loadLayout('character');
+      loadLayout('world');
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
