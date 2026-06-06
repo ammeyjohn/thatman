@@ -4,6 +4,7 @@ Chat Agent - 聊天代理模块
 集成记忆功能，自动检索相关世界记忆和角色记忆。
 """
 
+import json
 import os
 import logging
 from pathlib import Path
@@ -107,6 +108,7 @@ class ChatAgent:
                 frequency_penalty=llm_config.get("frequency_penalty", 0.1),
                 presence_penalty=llm_config.get("presence_penalty", 0.2),
                 streaming=True,
+                model_kwargs={"response_format": llm_config.get("response_format", {"type": "json_object"})},
             )
             info_log(f"LLM 初始化成功 - 模型: {model_name}, API: {api_base}")
         except Exception as e:
@@ -175,6 +177,40 @@ class ChatAgent:
             warn_log(f"检索记忆时出错: {e}")
             return ""
 
+    def _extract_memory_content(self, user_message: str, assistant_response: str) -> str:
+        """
+        从助手回复中提取关键字段，构建 markdown 格式的记忆内容
+
+        Args:
+            user_message: 用户发送的消息
+            assistant_response: 助手的完整回复（期望为 JSON 格式）
+
+        Returns:
+            markdown 格式的记忆内容
+        """
+        message = ""
+        time_info = ""
+        location = ""
+
+        try:
+            data = json.loads(assistant_response)
+            message = data.get("message", "")
+            time_info = data.get("time", "")
+            location = data.get("location", "")
+        except (json.JSONDecodeError, TypeError):
+            # JSON 解析失败时，使用原始响应作为 message
+            message = assistant_response
+
+        parts = [f"**玩家**: {user_message}"]
+        if message:
+            parts.append(f"**回复**: {message}")
+        if time_info:
+            parts.append(f"**时间**: {time_info}")
+        if location:
+            parts.append(f"**地点**: {location}")
+
+        return "\n\n".join(parts)
+
     def _save_conversation_memory(
         self,
         messages: List[Dict[str, str]],
@@ -202,7 +238,7 @@ class ChatAgent:
                 return
 
             # 构建记忆内容
-            memory_content = f"玩家: {last_user_message}\n回复: {assistant_response}"
+            memory_content = self._extract_memory_content(last_user_message, assistant_response)
 
             # 保存到角色记忆库
             success = self.memory_manager.save_character_memory(
@@ -331,7 +367,7 @@ class ChatAgent:
                 return False
 
             # 构建记忆内容
-            memory_content = f"玩家: {last_user_message}\n回复: {assistant_response}"
+            memory_content = self._extract_memory_content(last_user_message, assistant_response)
 
             # 保存到用户记忆库（以 user_id 为 bank 名称）
             success = self.memory_manager.save_user_memory(

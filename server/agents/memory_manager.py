@@ -404,9 +404,21 @@ class MemoryManager:
             return False
 
         # 构建记忆内容
-        memory_content = f"玩家: {user_msg}"
+        parts = [f"**玩家**: {user_msg}"]
         if assistant_msg:
-            memory_content += f"\n结果: {assistant_msg[:200]}..."
+            # 尝试从 JSON 中提取关键字段
+            try:
+                import json as _json
+                data = _json.loads(assistant_msg)
+                if data.get("message"):
+                    parts.append(f"**回复**: {data['message']}")
+                if data.get("time"):
+                    parts.append(f"**时间**: {data['time']}")
+                if data.get("location"):
+                    parts.append(f"**地点**: {data['location']}")
+            except (ValueError, TypeError):
+                parts.append(f"**回复**: {assistant_msg[:200]}")
+        memory_content = "\n\n".join(parts)
 
         # 根据重要程度设置上下文
         context_map = {
