@@ -9,6 +9,74 @@ const generateId = () => {
   return `${Date.now()}-${messageIdCounter}`;
 };
 
+/**
+ * 从不完整的 JSON 字符串中渐进式提取 "message" 字段值
+ * 策略：用正则定位 "message":" 的起始位置，然后逐字符解析字符串内容（处理转义字符）
+ * @param rawContent 已接收的原始内容
+ * @returns 提取到的 message 内容，如果无法提取则返回 null
+ */
+function extractMessageFromPartialJSON(rawContent: string): string | null {
+  // 用正则定位 "message" 字段起始位置
+  const match = rawContent.match(/"message"\s*:\s*"/);
+  if (!match || match.index === undefined) return null;
+
+  // 定位到 message 值的起始位置（跳过 "message":" 部分）
+  const startIndex = match.index + match[0].length;
+  const content = rawContent.slice(startIndex);
+
+  // 逐字符解析字符串内容，处理转义字符
+  let result = '';
+  let i = 0;
+  while (i < content.length) {
+    if (content[i] === '\\') {
+      // 转义序列
+      if (i + 1 < content.length) {
+        const nextChar = content[i + 1];
+        switch (nextChar) {
+          case '"': result += '"'; break;
+          case '\\': result += '\\'; break;
+          case 'n': result += '\n'; break;
+          case 'r': result += '\r'; break;
+          case 't': result += '\t'; break;
+          case '/': result += '/'; break;
+          case 'b': result += '\b'; break;
+          case 'f': result += '\f'; break;
+          case 'u': {
+            // Unicode 转义 \uXXXX
+            if (i + 5 < content.length) {
+              const hex = content.slice(i + 2, i + 6);
+              const code = parseInt(hex, 16);
+              if (!isNaN(code)) {
+                result += String.fromCharCode(code);
+                i += 6;
+                continue;
+              }
+            }
+            // 不完整的 Unicode 转义，原样保留
+            result += '\\u';
+            i += 2;
+            continue;
+          }
+          default:
+            result += nextChar;
+        }
+        i += 2;
+      } else {
+        // 转义字符不完整（在末尾），跳过
+        break;
+      }
+    } else if (content[i] === '"') {
+      // 遇到未转义的引号，字符串结束（JSON 该字段已完整）
+      break;
+    } else {
+      result += content[i];
+      i += 1;
+    }
+  }
+
+  return result;
+}
+
 export interface StreamStats {
   contextTokens: number;
   contextMax: number;
@@ -31,6 +99,7 @@ interface ChatState {
   updateLastMessageOptions: (options: string[]) => void;
   updateLastMessageActions: (actions: string[]) => void;
   updateLastMessageParsedJSON: (parsedJSON: Record<string, unknown>) => void;
+  updateLastMessageRawJSON: (rawJSON: string) => void;
   setInputValue: (value: string) => void;
   setStreamingContent: (content: string) => void;
   clearMessages: () => void;
@@ -117,6 +186,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages };
     }),
 
+  updateLastMessageRawJSON: (rawJSON) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        lastMessage.rawJSON = rawJSON;
+      }
+      return { messages };
+    }),
+
   setInputValue: (value) => set({ inputValue: value }),
 
   setStreamingContent: (content) => set({ streamingContent: content }),
@@ -152,7 +231,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   regenerateMessage: async (messageId: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, resetStreamStats, deleteMessage } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, resetStreamStats, deleteMessage } = get();
 
     // 找到要重新生成的消息
     const messageIndex = messages.findIndex((m) => m.id === messageId);
@@ -198,7 +277,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let outputTokens = 0;
     let rawContent = '';
     let lastParsedMessage = '';
-    let hasParsedJSON = false;
 
     try {
       // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
@@ -286,7 +364,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 try {
                   const jsonData = JSON.parse(rawContent);
                   if (jsonData && typeof jsonData === 'object') {
-                    hasParsedJSON = true;
                     // 提取 message 字段用于流式展示
                     if (typeof jsonData.message === 'string') {
                       displayContent = jsonData.message;
@@ -299,6 +376,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                     // 保存完整解析的 JSON
                     updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
+                    // 保存原始 JSON 字符串
+                    updateLastMessageRawJSON(rawContent);
                     // 提取 location 和 time
                     const updates: Partial<ChatState> = {};
                     if (typeof jsonData.location === 'string') {
@@ -312,10 +391,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                   }
                 } catch {
-                  // JSON 尚未完整，如果之前解析过 message，则继续展示上次解析的 message
-                  if (hasParsedJSON && lastParsedMessage) {
+                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取 message 字段
+                  const partialMessage = extractMessageFromPartialJSON(rawContent);
+                  if (partialMessage !== null) {
+                    displayContent = partialMessage;
+                    lastParsedMessage = partialMessage;
+                  } else if (lastParsedMessage) {
+                    // 正则也提取不到，使用上次成功提取的内容
                     displayContent = lastParsedMessage;
                   }
+                  // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
                 }
 
                 updateLastMessage(displayContent);
@@ -350,7 +435,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, resetStreamStats } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, resetStreamStats } = get();
 
     // 添加用户消息
     addMessage({
@@ -393,7 +478,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let outputTokens = 0;
     let rawContent = '';
     let lastParsedMessage = '';
-    let hasParsedJSON = false;
 
     try {
       // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
@@ -478,7 +562,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 try {
                   const jsonData = JSON.parse(rawContent);
                   if (jsonData && typeof jsonData === 'object') {
-                    hasParsedJSON = true;
                     // 提取 message 字段用于流式展示
                     if (typeof jsonData.message === 'string') {
                       displayContent = jsonData.message;
@@ -491,6 +574,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                     // 保存完整解析的 JSON
                     updateLastMessageParsedJSON(jsonData as Record<string, unknown>);
+                    // 保存原始 JSON 字符串
+                    updateLastMessageRawJSON(rawContent);
                     // 提取 location 和 time
                     const updates: Partial<ChatState> = {};
                     if (typeof jsonData.location === 'string') {
@@ -504,10 +589,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                   }
                 } catch {
-                  // JSON 尚未完整，如果之前解析过 message，则继续展示上次解析的 message
-                  if (hasParsedJSON && lastParsedMessage) {
+                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取 message 字段
+                  const partialMessage = extractMessageFromPartialJSON(rawContent);
+                  if (partialMessage !== null) {
+                    displayContent = partialMessage;
+                    lastParsedMessage = partialMessage;
+                  } else if (lastParsedMessage) {
+                    // 正则也提取不到，使用上次成功提取的内容
                     displayContent = lastParsedMessage;
                   }
+                  // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
                 }
 
                 updateLastMessage(displayContent);

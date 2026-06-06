@@ -50,6 +50,7 @@ export interface ChatMessage {
   options?: string[];
   actions?: string[];
   parsedJSON?: Record<string, unknown>;
+  rawJSON?: string;
 }
 
 // 游戏响应JSON结构

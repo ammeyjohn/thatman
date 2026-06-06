@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ChatMessage as ChatMessageType } from '../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Pencil, Trash2, RefreshCw, Check } from 'lucide-react';
+import { Copy, Pencil, Trash2, RefreshCw, Check, Braces } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -28,6 +28,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
   const [editContent, setEditContent] = useState(message.content);
   const [copied, setCopied] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showRawJSON, setShowRawJSON] = useState(false);
 
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -133,7 +134,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     </div>
   );
 
-  // AI 消息按钮：复制、编辑、重新生成、删除
+  // AI 消息按钮：复制、编辑、重新生成、删除、查看JSON
   const npcButtons = (
     <div className={`flex items-center gap-1 mt-2 ${isPlayer ? 'justify-end' : 'justify-start'}`}>
       <button
@@ -164,6 +165,20 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
       >
         <Trash2 className="w-4 h-4" />
       </button>
+      {message.rawJSON && (
+        <button
+          data-name="json-toggle"
+          onClick={() => setShowRawJSON(!showRawJSON)}
+          className={`p-1.5 rounded transition-all duration-200 ${
+            showRawJSON
+              ? 'text-[#c9a227] bg-[#c9a227]/10'
+              : 'text-[#5a7a7a] hover:text-[#c9a227] hover:bg-[#c9a227]/10'
+          }`}
+          title={showRawJSON ? '收起 JSON' : '查看 JSON'}
+        >
+          <Braces className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 
@@ -175,7 +190,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
 
   return (
     <>
-      <div className={`flex ${isPlayer ? 'justify-end' : 'justify-start'} mb-4 w-full min-w-0`}>
+      <div data-name="message-container" className={`flex ${isPlayer ? 'justify-end' : 'justify-start'} mb-4 w-full min-w-0`}>
         <div className={`flex items-start gap-3 max-w-[80%] min-w-0 ${isPlayer ? 'flex-row-reverse' : 'flex-row'}`}>
           {/* Avatar */}
           <div
@@ -192,11 +207,12 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
           <div className={`flex flex-col min-w-0 max-w-full ${isPlayer ? 'items-end' : 'items-start'}`}>
             {/* Sender Name */}
             {!isPlayer && message.senderName && (
-              <span className="text-xs text-[#a0c0c0] mb-1">{message.senderName}</span>
+              <span data-name="sender-name" className="text-xs text-[#a0c0c0] mb-1">{message.senderName}</span>
             )}
 
             {/* Message Bubble */}
             <div
+              data-name="message-bubble"
               className={`px-4 py-3 rounded-2xl min-w-0 max-w-full ${
                 isPlayer
                   ? 'bg-gradient-to-br from-[#2d5a5a] to-[#1a3a3a] border border-[#3d7a7a]/50 rounded-tr-sm'
@@ -214,36 +230,34 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                 />
               ) : (
                 <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
-                  {isPlayer ? (
-                    // 用户消息使用普通文本展示
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                      }}
-                    >
-                      {formatTextWithLineBreaks(message.content)}
-                    </ReactMarkdown>
-                  ) : (
-                    // AI消息：使用Markdown格式展示内容（store已解析出message字段）
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                      }}
-                    >
-                      {formatTextWithLineBreaks(message.content)}
-                    </ReactMarkdown>
-                  )}
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                    }}
+                  >
+                    {formatTextWithLineBreaks(message.content)}
+                  </ReactMarkdown>
                 </div>
               )}
             </div>
 
+            {/* JSON Viewer */}
+            {!isPlayer && showRawJSON && message.rawJSON && (
+              <div data-name="json-viewer" className="mt-2 w-full max-w-full">
+                <pre className="bg-[#0a0a0f] border border-[#2d5a5a]/30 rounded-lg p-3 text-[#a0c0c0] text-xs font-mono whitespace-pre-wrap break-all overflow-auto max-h-80">
+                  {message.rawJSON}
+                </pre>
+              </div>
+            )}
+
             {/* Timestamp */}
-            <span className="text-[10px] text-[#5a7a7a] mt-1">{formatTime(message.timestamp)}</span>
+            <span data-name="message-timestamp" className="text-[10px] text-[#5a7a7a] mt-1">{formatTime(message.timestamp)}</span>
 
             {/* Action Buttons */}
-            {isPlayer ? playerButtons : npcButtons}
+            <div data-name="message-actions">
+              {isPlayer ? playerButtons : npcButtons}
+            </div>
 
             {/* Actions Buttons - 从消息数据中的actions数组 */}
             {!isPlayer && message.actions && message.actions.length > 0 && (
@@ -251,6 +265,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                 {message.actions.map((action, index) => (
                   <button
                     key={index}
+                    data-name="action-button"
                     onClick={() => onOptionClick?.(action)}
                     className="px-3 py-1.5 text-sm bg-[#2d5a5a]/30 hover:bg-[#2d5a5a]/50 border border-[#3d7a7a]/50 hover:border-[#3d7a7a] rounded-lg text-[#a0c0c0] hover:text-[#e8e4dc] transition-all duration-200"
                   >

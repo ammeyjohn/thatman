@@ -38,9 +38,9 @@ export function ChatInput() {
   const contextPercent = Math.round((streamStats.contextTokens / streamStats.contextMax) * 100);
 
   return (
-    <div className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30 flex-shrink-0">
+    <div data-name="chat-input" className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30 flex-shrink-0">
       {/* Quick Actions */}
-      <div className="flex gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
+      <div data-name="quick-actions" className="flex gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
         {quickActions.map((action) => (
           <button
             key={action.label}
@@ -62,6 +62,7 @@ export function ChatInput() {
       >
         <div className="flex-1 h-full">
           <textarea
+            data-name="input-textarea"
             ref={textareaRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -78,6 +79,7 @@ export function ChatInput() {
 
         {isLoading ? (
           <button
+            data-name="stop-button"
             onClick={stopGeneration}
             className="flex items-center justify-center w-10 h-10 rounded-lg bg-red-500/80 hover:bg-red-500 transition-all duration-200 shadow-lg shadow-red-500/20"
             title="停止生成"
@@ -86,6 +88,7 @@ export function ChatInput() {
           </button>
         ) : (
           <button
+            data-name="send-button"
             onClick={handleSend}
             disabled={!inputValue.trim()}
             className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${
@@ -101,7 +104,7 @@ export function ChatInput() {
 
       {/* Stream Stats */}
       {isLoading && (
-        <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[#5a7a7a]">
+        <div data-name="stream-stats" className="flex items-center justify-center gap-6 mt-3 text-xs text-[#5a7a7a]">
           <span>
             Context: {streamStats.contextTokens}/{streamStats.contextMax} ({contextPercent}%)
           </span>
