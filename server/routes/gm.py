@@ -113,6 +113,7 @@ def gm_chat():
         # 返回标准结构体
         response_data = {
             'dialog': result.get('dialog', ''),
+            'actions': result.get('actions', []),
             'player_update': result.get('player_update', {}),
             'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
         }

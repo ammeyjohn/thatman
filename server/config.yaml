@@ -57,7 +57,7 @@ gm:
   # Qdrant 配置
   qdrant:
     url: http://localhost:6333
-    collection: plot
+    collection: episode
   # Hindsight 记忆库配置
   hindsight:
     base_url: http://localhost:8888

@@ -306,11 +306,11 @@ class GameMaster:
 
         if not llm:
             error_log("LLM 实例为空，无法调用")
-            return {"dialog": "系统异常，请稍后重试。", "player_update": {}, "ui_config": {}, "save_flag": ""}
+            return {"dialog": "系统异常，请稍后重试。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
         if not self.storage:
             error_log("storage 未初始化，工具无法执行")
-            return {"dialog": "系统异常，存储层不可用。", "player_update": {}, "ui_config": {}, "save_flag": ""}
+            return {"dialog": "系统异常，存储层不可用。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
         # 绑定工具
         debug_log(f"[llm_chat_loop] Step1 绑定工具: tools数={len(self.tools)}")
@@ -328,7 +328,7 @@ class GameMaster:
                 debug_log(f"[llm_chat_loop] LLM响应成功: content长度={len(ai_message.content) if hasattr(ai_message, 'content') and ai_message.content else 0}")
             except Exception as e:
                 error_log(f"LLM 调用失败: {e}")
-                return {"dialog": "大模型调用异常，请稍后重试。", "player_update": {}, "ui_config": {}, "save_flag": ""}
+                return {"dialog": "大模型调用异常，请稍后重试。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
             # 检查是否有工具调用
             tool_calls = getattr(ai_message, "tool_calls", None)
@@ -387,7 +387,7 @@ class GameMaster:
 
         # 超过最大循环次数
         error_log(f"LLM 工具调用循环超过最大次数 {self.MAX_TOOL_LOOP}")
-        return {"dialog": "系统处理超时，请稍后重试。", "player_update": {}, "ui_config": {}, "save_flag": ""}
+        return {"dialog": "系统处理超时，请稍后重试。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
     def handle_chat(
         self,
@@ -438,10 +438,11 @@ class GameMaster:
 
             # 4. 提取字段
             dialog = resp_json.get("dialog", "")
+            actions = resp_json.get("actions", [])
             player_update = resp_json.get("player_update", {})
             ui_config = resp_json.get("ui_config", {})
             save_flag = resp_json.get("save_flag", "")
-            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
+            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, actions={actions}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
 
             # 5. 落库分发
             if self.storage and save_flag:
@@ -456,9 +457,10 @@ class GameMaster:
                 debug_log(f"[handle_chat] Step5 跳过落库: save_flag={save_flag}, storage={'已初始化' if self.storage else '未初始化'}")
 
             # 6. 返回结果（不暴露 save_flag 给前端）
-            debug_log(f"[handle_chat] Step6 返回结果: dialog长度={len(dialog)}")
+            debug_log(f"[handle_chat] Step6 返回结果: dialog长度={len(dialog)}, actions={actions}")
             return {
                 "dialog": dialog,
+                "actions": actions,
                 "player_update": player_update,
                 "ui_config": ui_config,
             }
@@ -467,6 +469,7 @@ class GameMaster:
             error_log(f"处理玩家聊天异常: uid={uid}, 错误: {e}")
             return {
                 "dialog": "系统处理异常，请稍后重试。",
+                "actions": [],
                 "player_update": {},
                 "ui_config": {},
             }
@@ -575,7 +578,7 @@ class GameMaster:
         """
         if not content or not content.strip():
             warn_log("LLM 返回内容为空")
-            return {"dialog": "", "player_update": {}, "ui_config": {}, "save_flag": ""}
+            return {"dialog": "", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
         # 尝试提取 markdown 代码块中的 JSON
         text = content.strip()
@@ -597,11 +600,11 @@ class GameMaster:
                 return result
             else:
                 warn_log(f"LLM 返回 JSON 不是字典类型: {type(result)}")
-                return {"dialog": content, "player_update": {}, "ui_config": {}, "save_flag": ""}
+                return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
         except json.JSONDecodeError as e:
             warn_log(f"LLM 返回 JSON 解析失败: {e}, 原始内容: {content[:200]}")
             # JSON 解析失败，将原始文本作为 dialog 返回
-            return {"dialog": content, "player_update": {}, "ui_config": {}, "save_flag": ""}
+            return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
 
 # ================================================================

@@ -2,178 +2,13 @@ import { create } from 'zustand';
 import type { ChatMessage } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId } from '../lib/user';
+import { useGameStore } from './gameStore';
 
 let messageIdCounter = 0;
 const generateId = () => {
   messageIdCounter += 1;
   return `${Date.now()}-${messageIdCounter}`;
 };
-
-/**
- * 从不完整的 JSON 字符串中渐进式提取 "message" 字段值
- * 策略：用正则定位 "message":" 的起始位置，然后逐字符解析字符串内容（处理转义字符）
- * @param rawContent 已接收的原始内容
- * @returns 提取到的 message 内容，如果无法提取则返回 null
- */
-function extractMessageFromPartialJSON(rawContent: string): string | null {
-  // 用正则定位 "message" 字段起始位置
-  const match = rawContent.match(/"message"\s*:\s*"/);
-  if (!match || match.index === undefined) return null;
-
-  // 定位到 message 值的起始位置（跳过 "message":" 部分）
-  const startIndex = match.index + match[0].length;
-  const content = rawContent.slice(startIndex);
-
-  // 逐字符解析字符串内容，处理转义字符
-  let result = '';
-  let i = 0;
-  while (i < content.length) {
-    if (content[i] === '\\') {
-      // 转义序列
-      if (i + 1 < content.length) {
-        const nextChar = content[i + 1];
-        switch (nextChar) {
-          case '"': result += '"'; break;
-          case '\\': result += '\\'; break;
-          case 'n': result += '\n'; break;
-          case 'r': result += '\r'; break;
-          case 't': result += '\t'; break;
-          case '/': result += '/'; break;
-          case 'b': result += '\b'; break;
-          case 'f': result += '\f'; break;
-          case 'u': {
-            // Unicode 转义 \uXXXX
-            if (i + 5 < content.length) {
-              const hex = content.slice(i + 2, i + 6);
-              const code = parseInt(hex, 16);
-              if (!isNaN(code)) {
-                result += String.fromCharCode(code);
-                i += 6;
-                continue;
-              }
-            }
-            // 不完整的 Unicode 转义，原样保留
-            result += '\\u';
-            i += 2;
-            continue;
-          }
-          default:
-            result += nextChar;
-        }
-        i += 2;
-      } else {
-        // 转义字符不完整（在末尾），跳过
-        break;
-      }
-    } else if (content[i] === '"') {
-      // 遇到未转义的引号，字符串结束（JSON 该字段已完整）
-      break;
-    } else {
-      result += content[i];
-      i += 1;
-    }
-  }
-
-  return result;
-}
-
-/**
- * 从原始内容中尝试解析 JSON，处理 markdown 代码块包裹和前后多余文本
- * @param content 原始内容
- * @returns 解析后的 JSON 对象，如果无法解析则返回 null
- */
-function tryParseJSONFromContent(content: string): Record<string, unknown> | null {
-  if (!content || !content.trim()) return null;
-
-  // 策略1：直接解析
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch { /* 继续尝试 */ }
-
-  // 策略2：去除 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
-  const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (codeBlockMatch) {
-    try {
-      const parsed = JSON.parse(codeBlockMatch[1]);
-      if (parsed && typeof parsed === 'object') return parsed;
-    } catch { /* 继续尝试 */ }
-  }
-
-  // 策略3：找到第一个 { 和最后一个 } 之间的内容
-  const firstBrace = content.indexOf('{');
-  const lastBrace = content.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    try {
-      const jsonStr = content.slice(firstBrace, lastBrace + 1);
-      const parsed = JSON.parse(jsonStr);
-      if (parsed && typeof parsed === 'object') return parsed;
-    } catch { /* 无法解析 */ }
-  }
-
-  return null;
-}
-
-/**
- * 从部分 JSON 中提取 actions 数组（流式传输期间使用）
- * 策略：找到 "actions": 后的数组，提取其中的字符串元素
- * @param rawContent 已接收的原始内容
- * @returns 提取到的 actions 数组，如果无法提取则返回 null
- */
-function extractActionsFromPartialJSON(rawContent: string): string[] | null {
-  // 找到 "actions" 字段
-  const match = rawContent.match(/"actions"\s*:\s*\[/);
-  if (!match || match.index === undefined) return null;
-
-  // 定位到数组内容的起始位置（跳过 "actions":[ 部分）
-  const startIndex = match.index + match[0].length;
-  const arrayContent = rawContent.slice(startIndex);
-
-  // 提取数组中的字符串元素
-  const actions: string[] = [];
-  let i = 0;
-  let inString = false;
-  let currentString = '';
-
-  while (i < arrayContent.length) {
-    const ch = arrayContent[i];
-
-    if (inString) {
-      if (ch === '\\' && i + 1 < arrayContent.length) {
-        // 转义字符
-        const nextChar = arrayContent[i + 1];
-        switch (nextChar) {
-          case '"': currentString += '"'; break;
-          case '\\': currentString += '\\'; break;
-          case 'n': currentString += '\n'; break;
-          case 'r': currentString += '\r'; break;
-          case 't': currentString += '\t'; break;
-          default: currentString += nextChar;
-        }
-        i += 2;
-        continue;
-      } else if (ch === '"') {
-        // 字符串结束
-        inString = false;
-        actions.push(currentString);
-        currentString = '';
-      } else {
-        currentString += ch;
-      }
-    } else {
-      if (ch === '"') {
-        inString = true;
-        currentString = '';
-      } else if (ch === ']') {
-        // 数组结束
-        break;
-      }
-    }
-    i += 1;
-  }
-
-  return actions.length > 0 ? actions : null;
-}
 
 export interface StreamStats {
   contextTokens: number;
@@ -218,6 +53,84 @@ const initialStreamStats: StreamStats = {
   outputMax: null,
   tokensPerSecond: 0,
 };
+
+/**
+ * 调用 /gm/chat 接口，处理 GM 响应
+ */
+async function callGmChat(
+  uid: string,
+  userInput: string,
+  currentArea: string,
+  sessionHistory: { role: string; content: string }[],
+  signal?: AbortSignal,
+): Promise<{ dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown> }> {
+  const response = await fetch(`${config.API_BASE_URL}/gm/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      uid,
+      user_input: userInput,
+      current_area: currentArea,
+      session_history: sessionHistory,
+      req_type: 'chat',
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    const errorMsg = errorData?.error?.message || `HTTP error! status: ${response.status}`;
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
+ * 处理 GM 响应中的 player_update 和 ui_config，更新 gameStore
+ */
+function applyGmResponseToGameStore(
+  playerUpdate: Record<string, unknown>,
+  uiConfig: Record<string, unknown>,
+) {
+  const gameStore = useGameStore.getState();
+
+  // 处理 player_update
+  if (playerUpdate && Object.keys(playerUpdate).length > 0) {
+    const charUpdates: Record<string, unknown> = {};
+
+    if (typeof playerUpdate.name === 'string') charUpdates.name = playerUpdate.name;
+    if (typeof playerUpdate.realm === 'string') charUpdates.realm = playerUpdate.realm;
+    if (typeof playerUpdate.realm_stage === 'string') charUpdates.realmStage = playerUpdate.realm_stage;
+    if (typeof playerUpdate.level === 'number') charUpdates.level = playerUpdate.level;
+    if (typeof playerUpdate.health === 'number') charUpdates.health = playerUpdate.health;
+    if (typeof playerUpdate.max_health === 'number') charUpdates.maxHealth = playerUpdate.max_health;
+    if (typeof playerUpdate.mana === 'number') charUpdates.mana = playerUpdate.mana;
+    if (typeof playerUpdate.max_mana === 'number') charUpdates.maxMana = playerUpdate.max_mana;
+    if (typeof playerUpdate.spirit === 'number') charUpdates.spirit = playerUpdate.spirit;
+    if (typeof playerUpdate.max_spirit === 'number') charUpdates.maxSpirit = playerUpdate.max_spirit;
+    if (Array.isArray(playerUpdate.equipment)) charUpdates.equipment = playerUpdate.equipment;
+
+    if (Object.keys(charUpdates).length > 0) {
+      gameStore.updateCharacter(charUpdates);
+    }
+  }
+
+  // 处理 ui_config
+  if (uiConfig && Object.keys(uiConfig).length > 0) {
+    const worldUpdates: Record<string, unknown> = {};
+
+    if (typeof uiConfig.location === 'string') worldUpdates.location = uiConfig.location;
+    if (typeof uiConfig.time === 'string') worldUpdates.time = uiConfig.time;
+    if (typeof uiConfig.weather === 'string') worldUpdates.weather = uiConfig.weather;
+
+    if (Object.keys(worldUpdates).length > 0) {
+      gameStore.updateWorld(worldUpdates);
+    }
+  }
+}
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: initialMessages,
@@ -335,7 +248,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const messageIndex = messages.findIndex((m) => m.id === messageId);
     if (messageIndex === -1) return;
 
-    // 获取该消息之前的所有消息（包括用户消息）
+    // 获取该消息之前的所有消息
     const previousMessages = messages.slice(0, messageIndex);
 
     // 删除当前AI消息
@@ -372,147 +285,78 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const startTime = Date.now();
-    let outputTokens = 0;
-    let rawContent = '';
-    let lastParsedMessage = '';
 
     try {
-      // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
-      const historyMsg = previousMessages
+      // 构建 session_history：取最近 10 轮对话（排除系统消息）
+      const sessionHistory = previousMessages
         .filter((m) => m.sender !== 'system')
-        .slice(-20) // 最多 20 条消息（10 轮对话）
+        .slice(-20)
         .map((m) => ({
           role: m.sender === 'player' ? 'user' : 'assistant',
           content: m.content,
         }));
 
-      // 获取当前位置信息（从 gameStore 或默认值）
-      const currentLocation = '青云古域·云溪村'; // TODO: 可从 gameStore 获取
+      // 获取当前位置信息
+      const currentArea = useGameStore.getState().world.location;
 
-      // 获取最后一条用户消息作为 input_text
+      // 获取最后一条用户消息作为 user_input
       const lastUserMessage = previousMessages
         .filter((m) => m.sender === 'player')
         .pop();
-      const inputText = lastUserMessage ? lastUserMessage.content : '';
+      const userInput = lastUserMessage ? lastUserMessage.content : '';
 
-      const response = await fetch(`${config.API_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': getOrCreateUserId(),
+      const result = await callGmChat(
+        getOrCreateUserId(),
+        userInput,
+        currentArea,
+        sessionHistory,
+        abortController.signal,
+      );
+
+      const outputTokens = Math.ceil(result.dialog.length * 0.5);
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
+
+      set((state) => ({
+        streamStats: {
+          ...state.streamStats,
+          outputTokens,
+          tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
         },
-        body: JSON.stringify({
-          uid: getOrCreateUserId(),
-          input_text: inputText,
-          current_location: currentLocation,
-          req_type: 'chat',
-          history_msg: historyMsg,
-          stream: true,
-        }),
-        signal: abortController.signal,
-      });
+      }));
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      // 更新消息内容
+      updateLastMessage(result.dialog);
+      set({ streamingContent: result.dialog });
+
+      // 提取 actions
+      const actions = Array.isArray(result.actions)
+        ? result.actions.filter((a): a is string => typeof a === 'string')
+        : [];
+      if (actions.length > 0) {
+        updateLastMessageActions(actions);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
+      // 保存解析后的 JSON
+      updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
+      updateLastMessageRawJSON(JSON.stringify(result, null, 2));
 
-      if (!reader) {
-        throw new Error('无法获取响应流');
+      // 更新 location 和 time
+      const uiConfig = result.ui_config || {};
+      const updates: Partial<ChatState> = {};
+      if (typeof uiConfig.location === 'string') {
+        updates.lastLocation = uiConfig.location;
+      }
+      if (typeof uiConfig.time === 'string') {
+        updates.lastTime = uiConfig.time;
+      }
+      if (updates.lastLocation || updates.lastTime) {
+        set(updates);
       }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      // 更新 gameStore
+      applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
 
-        if (abortController.signal.aborted) {
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                outputTokens += 1;
-                rawContent += delta;
-
-                const elapsedSeconds = (Date.now() - startTime) / 1000;
-                const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
-
-                set((state) => ({
-                  streamStats: {
-                    ...state.streamStats,
-                    outputTokens,
-                    tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-                  },
-                }));
-
-                // 尝试解析 JSON，提取 message 字段进行流式展示
-                let displayContent = rawContent;
-                const jsonData = tryParseJSONFromContent(rawContent);
-                if (jsonData) {
-                  // 提取 message 字段用于流式展示
-                  if (typeof jsonData.message === 'string') {
-                    displayContent = jsonData.message;
-                    lastParsedMessage = jsonData.message;
-                  }
-                  // 提取 actions 字段
-                  if (Array.isArray(jsonData.actions)) {
-                    const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
-                    updateLastMessageActions(actions);
-                  }
-                  // 保存完整解析的 JSON
-                  updateLastMessageParsedJSON(jsonData);
-                  // 保存原始 JSON 字符串
-                  updateLastMessageRawJSON(rawContent);
-                  // 提取 location 和 time
-                  const updates: Partial<ChatState> = {};
-                  if (typeof jsonData.location === 'string') {
-                    updates.lastLocation = jsonData.location;
-                  }
-                  if (typeof jsonData.time === 'string') {
-                    updates.lastTime = jsonData.time;
-                  }
-                  if (updates.lastLocation || updates.lastTime) {
-                    set(updates);
-                  }
-                } else {
-                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取字段
-                  const partialMessage = extractMessageFromPartialJSON(rawContent);
-                  if (partialMessage !== null) {
-                    displayContent = partialMessage;
-                    lastParsedMessage = partialMessage;
-                  } else if (lastParsedMessage) {
-                    // 正则也提取不到，使用上次成功提取的内容
-                    displayContent = lastParsedMessage;
-                  }
-                  // 尝试从部分 JSON 中提取 actions
-                  const partialActions = extractActionsFromPartialJSON(rawContent);
-                  if (partialActions) {
-                    updateLastMessageActions(partialActions);
-                  }
-                  // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
-                }
-
-                updateLastMessage(displayContent);
-                set({ streamingContent: rawContent });
-              }
-            } catch {
-              // 忽略解析错误的行
-            }
-          }
-        }
-      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         console.log('生成已停止');
@@ -521,30 +365,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updateLastMessage(`重新生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
-      // 流式结束后，最终尝试提取 actions（确保 markdown 代码块包裹的 JSON 也能被解析）
-      if (rawContent) {
-        const finalJson = tryParseJSONFromContent(rawContent);
-        if (finalJson) {
-          if (Array.isArray(finalJson.actions)) {
-            const actions = finalJson.actions.filter((a: unknown) => typeof a === 'string') as string[];
-            if (actions.length > 0) {
-              updateLastMessageActions(actions);
-            }
-          }
-          if (!get().messages[get().messages.length - 1]?.parsedJSON) {
-            updateLastMessageParsedJSON(finalJson);
-          }
-          if (!get().messages[get().messages.length - 1]?.rawJSON) {
-            updateLastMessageRawJSON(rawContent);
-          }
-        } else {
-          // 最终尝试从部分 JSON 提取 actions
-          const partialActions = extractActionsFromPartialJSON(rawContent);
-          if (partialActions && partialActions.length > 0) {
-            updateLastMessageActions(partialActions);
-          }
-        }
-      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },
@@ -576,7 +396,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const abortController = new AbortController();
     set({ isLoading: true, streamingContent: '', abortController });
 
-    // 先添加一个空的AI消息，用于流式更新
+    // 先添加一个空的AI消息，用于更新
     addMessage({
       sender: 'npc',
       senderName: '云溪村长',
@@ -585,7 +405,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       type: 'normal',
     });
 
-    // 计算上下文 token 数（简单估算：每个字符约 0.5 个 token）
+    // 计算上下文 token 数
     const contextText = messages
       .filter((m) => m.sender !== 'system')
       .map((m) => m.content)
@@ -600,177 +420,80 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const startTime = Date.now();
-    let outputTokens = 0;
-    let rawContent = '';
-    let lastParsedMessage = '';
 
     try {
-      // 构建 history_msg：取最近 10 轮对话（排除系统消息），转换为 {role, content} 格式
-      const historyMsg = messages
+      // 构建 session_history：取最近 10 轮对话（排除系统消息）
+      const sessionHistory = messages
         .filter((m) => m.sender !== 'system')
-        .slice(-20) // 最多 20 条消息（10 轮对话）
+        .slice(-20)
         .map((m) => ({
           role: m.sender === 'player' ? 'user' : 'assistant',
           content: m.content,
         }));
 
-      // 获取当前位置信息（从 gameStore 或默认值）
-      const currentLocation = '青云古域·云溪村'; // TODO: 可从 gameStore 获取
+      // 获取当前位置信息
+      const currentArea = useGameStore.getState().world.location;
 
-      const response = await fetch(`${config.API_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': getOrCreateUserId(),
+      const result = await callGmChat(
+        getOrCreateUserId(),
+        content,
+        currentArea,
+        sessionHistory,
+        abortController.signal,
+      );
+
+      const outputTokens = Math.ceil(result.dialog.length * 0.5);
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
+
+      set((state) => ({
+        streamStats: {
+          ...state.streamStats,
+          outputTokens,
+          tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
         },
-        body: JSON.stringify({
-          uid: getOrCreateUserId(),
-          input_text: content,
-          current_location: currentLocation,
-          req_type: 'chat',
-          history_msg: historyMsg,
-          stream: true,
-        }),
-        signal: abortController.signal,
-      });
+      }));
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      // 更新消息内容
+      updateLastMessage(result.dialog);
+      set({ streamingContent: result.dialog });
+
+      // 提取 actions
+      const actions = Array.isArray(result.actions)
+        ? result.actions.filter((a): a is string => typeof a === 'string')
+        : [];
+      if (actions.length > 0) {
+        updateLastMessageActions(actions);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
+      // 保存解析后的 JSON
+      updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
+      updateLastMessageRawJSON(JSON.stringify(result, null, 2));
 
-      if (!reader) {
-        throw new Error('无法获取响应流');
+      // 更新 location 和 time
+      const uiConfig = result.ui_config || {};
+      const updates: Partial<ChatState> = {};
+      if (typeof uiConfig.location === 'string') {
+        updates.lastLocation = uiConfig.location;
+      }
+      if (typeof uiConfig.time === 'string') {
+        updates.lastTime = uiConfig.time;
+      }
+      if (updates.lastLocation || updates.lastTime) {
+        set(updates);
       }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      // 更新 gameStore
+      applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
 
-        // 检查是否已中止
-        if (abortController.signal.aborted) {
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                outputTokens += 1;
-                rawContent += delta;
-
-                // 计算生成速度
-                const elapsedSeconds = (Date.now() - startTime) / 1000;
-                const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
-
-                // 更新统计信息
-                set((state) => ({
-                  streamStats: {
-                    ...state.streamStats,
-                    outputTokens,
-                    tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-                  },
-                }));
-
-                // 尝试解析 JSON，提取 message 字段进行流式展示
-                let displayContent = rawContent;
-                const jsonData = tryParseJSONFromContent(rawContent);
-                if (jsonData) {
-                  // 提取 message 字段用于流式展示
-                  if (typeof jsonData.message === 'string') {
-                    displayContent = jsonData.message;
-                    lastParsedMessage = jsonData.message;
-                  }
-                  // 提取 actions 字段
-                  if (Array.isArray(jsonData.actions)) {
-                    const actions = jsonData.actions.filter((a: unknown) => typeof a === 'string') as string[];
-                    updateLastMessageActions(actions);
-                  }
-                  // 保存完整解析的 JSON
-                  updateLastMessageParsedJSON(jsonData);
-                  // 保存原始 JSON 字符串
-                  updateLastMessageRawJSON(rawContent);
-                  // 提取 location 和 time
-                  const updates: Partial<ChatState> = {};
-                  if (typeof jsonData.location === 'string') {
-                    updates.lastLocation = jsonData.location;
-                  }
-                  if (typeof jsonData.time === 'string') {
-                    updates.lastTime = jsonData.time;
-                  }
-                  if (updates.lastLocation || updates.lastTime) {
-                    set(updates);
-                  }
-                } else {
-                  // JSON 尚未完整，尝试用正则从部分内容中渐进式提取字段
-                  const partialMessage = extractMessageFromPartialJSON(rawContent);
-                  if (partialMessage !== null) {
-                    displayContent = partialMessage;
-                    lastParsedMessage = partialMessage;
-                  } else if (lastParsedMessage) {
-                    // 正则也提取不到，使用上次成功提取的内容
-                    displayContent = lastParsedMessage;
-                  }
-                  // 尝试从部分 JSON 中提取 actions
-                  const partialActions = extractActionsFromPartialJSON(rawContent);
-                  if (partialActions) {
-                    updateLastMessageActions(partialActions);
-                  }
-                  // 如果正则提取不到且没有上次的内容，displayContent 保持为 rawContent（兜底）
-                }
-
-                updateLastMessage(displayContent);
-                set({ streamingContent: rawContent });
-              }
-            } catch {
-              // 忽略解析错误的行
-            }
-          }
-        }
-      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        // 用户主动停止，不显示错误
         console.log('生成已停止');
       } else {
         console.error('发送消息失败:', error);
         updateLastMessage(`发送失败: ${error instanceof Error ? error.message : '未知错误'}`);
       }
     } finally {
-      // 流式结束后，最终尝试提取 actions（确保 markdown 代码块包裹的 JSON 也能被解析）
-      if (rawContent) {
-        const finalJson = tryParseJSONFromContent(rawContent);
-        if (finalJson) {
-          if (Array.isArray(finalJson.actions)) {
-            const actions = finalJson.actions.filter((a: unknown) => typeof a === 'string') as string[];
-            if (actions.length > 0) {
-              updateLastMessageActions(actions);
-            }
-          }
-          if (!get().messages[get().messages.length - 1]?.parsedJSON) {
-            updateLastMessageParsedJSON(finalJson);
-          }
-          if (!get().messages[get().messages.length - 1]?.rawJSON) {
-            updateLastMessageRawJSON(rawContent);
-          }
-        } else {
-          // 最终尝试从部分 JSON 提取 actions
-          const partialActions = extractActionsFromPartialJSON(rawContent);
-          if (partialActions && partialActions.length > 0) {
-            updateLastMessageActions(partialActions);
-          }
-        }
-      }
       set({ isLoading: false, streamingContent: '', abortController: null });
     }
   },

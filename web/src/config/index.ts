@@ -18,7 +18,7 @@ const getEnvVar = (key: string, defaultValue: string): string => {
 };
 
 export const config: AppConfig = {
-  API_BASE_URL: getEnvVar('VITE_API_BASE_URL', 'http://localhost:7778/v1'),
+  API_BASE_URL: getEnvVar('VITE_API_BASE_URL', 'http://localhost:8080/v1'),
   API_TIMEOUT: parseInt(getEnvVar('VITE_API_TIMEOUT', '30000'), 10),
   ENABLE_MOCK: getEnvVar('VITE_ENABLE_MOCK', 'false') === 'true',
 };
