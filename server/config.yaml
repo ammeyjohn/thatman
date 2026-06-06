@@ -29,3 +29,38 @@ hindsight:
   api_key: null
   # 世界 bank 名称，用于存储世界演化相关的长期记忆
   world_bank: world
+
+# GM 游戏主控配置
+gm:
+  # 玩家日常聊天模型（常驻）
+  chat_model:
+    api_base: http://localhost:7778/v1
+    api_key: not-needed
+    model_name: Qwen3.6-35B-A3B
+    temperature: 0.65
+    max_tokens: 4096
+  # 定时世界演化模型（按需启动，用完释放）
+  world_model:
+    api_base: http://localhost:7779/v1
+    api_key: not-needed
+    model_name: Qwen3.6-27B-MTP
+    temperature: 0.7
+    max_tokens: 8192
+  # CouchDB 配置
+  couchdb:
+    url: http://localhost:5984
+    db_prefix: game_
+    user: null
+    password: null
+  # Qdrant 配置
+  qdrant:
+    url: http://localhost:6333
+    collection: plot
+  # Hindsight 记忆库配置
+  hindsight:
+    base_url: http://localhost:8888
+    api_key: null
+  # 世界演化配置
+  world_tick:
+    interval_seconds: 3600
+    prompt: "请根据当前世界状态，推演世界变化。包括：宗门兴衰、NPC增减、秘境刷新、法宝出世、天灾与奇遇事件。输出标准JSON格式，save_flag设为world_snap。"

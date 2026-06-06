@@ -36,5 +36,6 @@ build/
 __pycache__/
 *.pyc
 
+story/
 data/
 hf_cache/

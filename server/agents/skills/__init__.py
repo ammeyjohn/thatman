@@ -19,5 +19,6 @@ Usage:
 
 from . import read_doc
 from . import find_skill
+from . import search_episode
 
-__all__ = ["read_doc", "find_skill"]
+__all__ = ["read_doc", "find_skill", "search_episode"]

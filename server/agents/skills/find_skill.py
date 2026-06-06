@@ -89,6 +89,30 @@ SKILL_DESCRIPTIONS = {
             },
         },
     },
+    "search_episode": {
+        "name": "search_episode",
+        "description": "根据用户输入和历史聊天内容，从 Qdrant 向量数据库查询相似的小说剧情片段",
+        "functions": {
+            "search_similar_episodes": {
+                "description": "查询相似的剧情片段",
+                "params": [
+                    "query: str - 用户输入的查询文本",
+                    "conversation_history: Optional[List[Dict[str, str]]] - 对话历史消息列表",
+                    "top_k: int - 返回的相似剧情数量，默认 5",
+                    "collection_name: Optional[str] - Qdrant 集合名称，默认 episode",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, query, total, episodes, error 的字典",
+            },
+            "format_episodes_as_context": {
+                "description": "将搜索结果格式化为 LLM 可用的上下文字符串",
+                "params": [
+                    "search_result: Dict[str, Any] - search_similar_episodes 的返回结果",
+                    "max_chars: int - 最大字符数限制，默认 2048",
+                ],
+                "returns": "str - 格式化的上下文字符串",
+            },
+        },
+    },
 }
 
 
@@ -343,6 +367,24 @@ for match in results["matches"]:
 from skills.find_skill import get_skill_info
 info = get_skill_info("read_doc")
 print(info["skill"])
+""",
+        "search_episode": """
+# 查询相似剧情
+from skills.search_episode import search_similar_episodes, format_episodes_as_context
+
+result = search_similar_episodes(
+    query="我想修炼炼丹术",
+    conversation_history=messages,
+    top_k=3,
+)
+
+if result["success"]:
+    for ep in result["episodes"]:
+        print(f"[score={ep['score']:.4f}] {ep['content'][:100]}...")
+
+    # 格式化为上下文
+    context = format_episodes_as_context(result)
+    print(context)
 """,
     }
     

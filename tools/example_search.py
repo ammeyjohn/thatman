@@ -28,7 +28,7 @@ from vectorize_novel import EmbeddingClient, info_log, error_log, warn_log
 
 # 默认配置
 DEFAULT_QDRANT_URL = "http://localhost:6333"
-DEFAULT_COLLECTION = "novel"
+DEFAULT_COLLECTION = "episode"
 DEFAULT_MODEL = str(Path.home() / ".cache" / "modelscope" / "hub" / "models" / "Qwen" / "Qwen3-Embedding-0.6B")
 
 

@@ -45,6 +45,15 @@ def error_log(message: str):
     print(f"\033[91m[ERROR] {message}\033[0m")
 
 
+# 导入剧情检索 skill（放在 debug_log 定义之后避免 NameError）
+try:
+    from skills.search_episode import search_similar_episodes, format_episodes_as_context
+    _HAS_SEARCH_EPISODE = True
+except Exception as _ep_err:
+    _HAS_SEARCH_EPISODE = False
+    debug_log(f"search_episode skill 加载失败: {_ep_err}")
+
+
 class ChatAgent:
     """聊天代理类，负责与大模型交互，集成记忆功能"""
 
@@ -177,6 +186,49 @@ class ChatAgent:
             warn_log(f"检索记忆时出错: {e}")
             return ""
 
+    def _retrieve_episodes_for_context(self, messages: List[Dict[str, str]]) -> str:
+        """
+        检索相似剧情片段并格式化为上下文
+
+        Args:
+            messages: 对话消息列表
+
+        Returns:
+            格式化的剧情上下文字符串
+        """
+        if not _HAS_SEARCH_EPISODE:
+            return ""
+
+        try:
+            # 获取最后一条用户消息作为查询
+            last_user_message = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    last_user_message = msg.get("content", "")
+                    break
+
+            if not last_user_message:
+                return ""
+
+            # 检索相似剧情
+            result = search_similar_episodes(
+                query=last_user_message,
+                conversation_history=messages,
+                top_k=3,
+            )
+
+            if result.get("success"):
+                episode_context = format_episodes_as_context(result, max_chars=2048)
+                if episode_context:
+                    debug_log(f"检索到相似剧情，长度: {len(episode_context)} 字符")
+                    return episode_context
+
+            return ""
+
+        except Exception as e:
+            warn_log(f"检索相似剧情时出错: {e}")
+            return ""
+
     def _extract_memory_content(self, user_message: str, assistant_response: str) -> str:
         """
         从助手回复中提取关键字段，构建 markdown 格式的记忆内容
@@ -285,12 +337,22 @@ class ChatAgent:
 
         # 构建系统提示词（包含记忆上下文）— 同步操作立即执行
         system_content = self.system_prompt
+        context_parts = []
 
         # 如果启用记忆功能，检索相关记忆
         if use_memory and self.memory_manager:
             memory_context = self._retrieve_memories_for_context(messages)
             if memory_context:
-                system_content = f"{self.system_prompt}\n\n{memory_context}"
+                context_parts.append(memory_context)
+
+        # 检索相似剧情片段
+        if use_memory:
+            episode_context = self._retrieve_episodes_for_context(messages)
+            if episode_context:
+                context_parts.append(episode_context)
+
+        if context_parts:
+            system_content = f"{self.system_prompt}\n\n" + "\n\n".join(context_parts)
 
         # 构建消息列表
         langchain_messages = [SystemMessage(content=system_content)]
