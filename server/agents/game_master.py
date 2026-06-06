@@ -19,33 +19,10 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from gm_storage import GMStorage
 from gm_tools import get_all_tools, match_and_execute_tool
+from gm_logger import debug_log, info_log, warn_log, error_log, set_debug, is_debug
 
 # 配置日志
 logger = logging.getLogger(__name__)
-
-
-def debug_log(message: str):
-    """输出 DEBUG 级别日志（灰色）"""
-    logger.debug(message)
-    print(f"\033[90m[DEBUG] {message}\033[0m")
-
-
-def info_log(message: str):
-    """输出 INFO 级别日志（白色）"""
-    logger.info(message)
-    print(f"\033[97m[INFO] {message}\033[0m")
-
-
-def warn_log(message: str):
-    """输出 WARN 级别日志（黄色）"""
-    logger.warning(message)
-    print(f"\033[93m[WARN] {message}\033[0m")
-
-
-def error_log(message: str):
-    """输出 ERROR 级别日志（红色）"""
-    logger.error(message)
-    print(f"\033[91m[ERROR] {message}\033[0m")
 
 
 class GameMaster:
@@ -59,6 +36,11 @@ class GameMaster:
         # 1. 加载配置
         self.config: Dict[str, Any] = {}
         self._load_config()
+
+        # 1.1 设置 debug 开关
+        gm_cfg = self.config.get("gm", {})
+        set_debug(gm_cfg.get("debug", True))
+        debug_log("GM debug 模式已启用" if is_debug() else "GM debug 模式已关闭")
 
         # 2. 初始化双模型 LLM 连接
         self.chat_model: Optional[ChatOpenAI] = None
@@ -201,14 +183,16 @@ class GameMaster:
             - memory_text: 角色&世界历史记忆文本
             - plot_text: 相关过往剧情片段文本
         """
+        debug_log(f"[pre_context] 开始预拉外围数据: uid={uid}, query={user_input[:80]}")
         memory_text = ""
         plot_text = ""
 
         try:
             # 拉取记忆
             if self.storage:
+                debug_log(f"[pre_context] Step1 拉取记忆: uid={uid}")
                 memory_text = self.storage.recall_all_memory(uid, user_input)
-                debug_log(f"预拉记忆完成: uid={uid}, 长度={len(memory_text)}")
+                debug_log(f"[pre_context] Step1 记忆拉取完成: 长度={len(memory_text)}")
             else:
                 warn_log("storage 未初始化，跳过记忆拉取")
         except Exception as e:
@@ -217,6 +201,7 @@ class GameMaster:
         try:
             # 拉取剧情向量
             if self.storage:
+                debug_log(f"[pre_context] Step2 拉取剧情向量: top_k=3")
                 plot_results = self.storage.search_plot_vector(user_input, 3)
                 if plot_results:
                     # 格式化为文本
@@ -227,12 +212,13 @@ class GameMaster:
                         if content:
                             parts.append(f"{i}. {content}")
                     plot_text = "\n".join(parts)
-                debug_log(f"预拉剧情完成: uid={uid}, 长度={len(plot_text)}")
+                debug_log(f"[pre_context] Step2 剧情拉取完成: 结果数={len(plot_results) if plot_results else 0}, 文本长度={len(plot_text)}")
             else:
                 warn_log("storage 未初始化，跳过剧情拉取")
         except Exception as e:
             error_log(f"预拉剧情失败: uid={uid}, 错误: {e}")
 
+        debug_log(f"[pre_context] 完成: memory长度={len(memory_text)}, plot长度={len(plot_text)}")
         return memory_text, plot_text
 
     def build_messages(
@@ -258,34 +244,45 @@ class GameMaster:
         Returns:
             拼装好的 messages 列表
         """
+        debug_log(f"[build_messages] 开始拼装: uid={uid}, area={current_area}, history轮数={len(session_history)}")
+
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": self.system_prompt},
         ]
+        debug_log(f"[build_messages] Step1 追加system prompt: 长度={len(self.system_prompt)}")
 
         # 追加前端本地短时对话
         if session_history:
             messages.extend(session_history)
+            debug_log(f"[build_messages] Step2 追加session_history: {len(session_history)}条")
+        else:
+            debug_log("[build_messages] Step2 无session_history")
 
         # 追加角色编号、当前区域、历史记忆
+        memory_section = (
+            f"【角色编号】{uid}\n"
+            f"【当前区域】{current_area}\n"
+            f"【角色&世界历史记忆】：{memory_text}"
+        )
         messages.append({
             "role": "system",
-            "content": (
-                f"【角色编号】{uid}\n"
-                f"【当前区域】{current_area}\n"
-                f"【角色&世界历史记忆】：{memory_text}"
-            ),
+            "content": memory_section,
         })
+        debug_log(f"[build_messages] Step3 追加角色信息+记忆: 长度={len(memory_section)}")
 
         # 追加相关过往剧情片段
+        plot_section = f"【相关过往剧情片段】：{plot_text}"
         messages.append({
             "role": "system",
-            "content": f"【相关过往剧情片段】：{plot_text}",
+            "content": plot_section,
         })
+        debug_log(f"[build_messages] Step4 追加剧情片段: 长度={len(plot_section)}")
 
         # 追加用户输入
         messages.append({"role": "user", "content": user_input})
+        debug_log(f"[build_messages] Step5 追加用户输入: 长度={len(user_input)}")
 
-        debug_log(f"消息拼装完成: uid={uid}, 消息数={len(messages)}")
+        debug_log(f"[build_messages] 完成: 总消息数={len(messages)}")
         return messages
 
     def llm_chat_loop(self, messages: List[Dict[str, str]], llm: ChatOpenAI) -> Dict[str, Any]:
@@ -305,6 +302,8 @@ class GameMaster:
         Raises:
             RuntimeError: LLM 超过最大循环次数仍未返回结果
         """
+        debug_log(f"[llm_chat_loop] 开始: messages数={len(messages)}, max_loop={self.MAX_TOOL_LOOP}")
+
         if not llm:
             error_log("LLM 实例为空，无法调用")
             return {"dialog": "系统异常，请稍后重试。", "player_update": {}, "ui_config": {}, "save_flag": ""}
@@ -314,16 +313,19 @@ class GameMaster:
             return {"dialog": "系统异常，存储层不可用。", "player_update": {}, "ui_config": {}, "save_flag": ""}
 
         # 绑定工具
+        debug_log(f"[llm_chat_loop] Step1 绑定工具: tools数={len(self.tools)}")
         llm_with_tools = llm.bind_tools(self.tools)
 
         # 转换消息为 LangChain 格式
+        debug_log("[llm_chat_loop] Step2 转换消息为LangChain格式")
         langchain_messages = self._convert_messages(messages)
 
         for loop_count in range(self.MAX_TOOL_LOOP):
-            debug_log(f"LLM 调用循环第 {loop_count + 1} 次")
+            debug_log(f"[llm_chat_loop] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
 
             try:
                 ai_message = llm_with_tools.invoke(langchain_messages)
+                debug_log(f"[llm_chat_loop] LLM响应成功: content长度={len(ai_message.content) if hasattr(ai_message, 'content') and ai_message.content else 0}")
             except Exception as e:
                 error_log(f"LLM 调用失败: {e}")
                 return {"dialog": "大模型调用异常，请稍后重试。", "player_update": {}, "ui_config": {}, "save_flag": ""}
@@ -334,16 +336,16 @@ class GameMaster:
             if not tool_calls:
                 # 无工具调用，尝试解析文本为 JSON
                 content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
-                debug_log(f"LLM 返回纯文本，长度={len(content)}")
+                debug_log(f"[llm_chat_loop] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
                 return self._parse_json_response(content)
 
             # 有工具调用，逐个执行
-            debug_log(f"LLM 返回 {len(tool_calls)} 个工具调用")
+            debug_log(f"[llm_chat_loop] Step4 收到 {len(tool_calls)} 个工具调用")
 
             # 将 AIMessage 追加到消息列表
             langchain_messages.append(ai_message)
 
-            for tool_call in tool_calls:
+            for idx, tool_call in enumerate(tool_calls):
                 tool_call_id = tool_call.get("id", "") if isinstance(tool_call, dict) else getattr(tool_call, "id", "")
                 function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
 
@@ -366,12 +368,13 @@ class GameMaster:
                     error_log(f"工具参数 JSON 解析失败: {e}")
                     tool_args = {}
 
+                debug_log(f"[llm_chat_loop] Step4.{idx+1} 执行工具: {tool_name}, 参数预览={json.dumps(tool_args, ensure_ascii=False)[:150]}")
                 info_log(f"执行工具: {tool_name}, 参数: {json.dumps(tool_args, ensure_ascii=False)[:200]}")
 
                 # 执行工具
                 try:
                     result = match_and_execute_tool(tool_name, tool_args, self.storage)
-                    debug_log(f"工具执行结果: {result[:200]}")
+                    debug_log(f"[llm_chat_loop] Step4.{idx+1} 工具执行完成: {tool_name}, 结果长度={len(result)}")
                 except Exception as e:
                     error_log(f"工具执行异常: {tool_name}, 错误: {e}")
                     result = json.dumps({"error": f"工具执行异常: {e}"}, ensure_ascii=False)
@@ -407,13 +410,17 @@ class GameMaster:
         Returns:
             {"dialog": ..., "player_update": ..., "ui_config": ...}
         """
-        info_log(f"处理玩家聊天: uid={uid}, area={current_area}, input={user_input[:50]}...")
+        info_log(f"处理玩家聊天: uid={uid}, area={current_area}, input={user_input}")
+        debug_log(f"[handle_chat] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
 
         try:
             # 1. 预拉外围数据
+            debug_log(f"[handle_chat] Step1 开始预拉外围数据: uid={uid}")
             memory_text, plot_text = self.pre_context(uid, user_input)
+            debug_log(f"[handle_chat] Step1 预拉完成: memory长度={len(memory_text)}, plot长度={len(plot_text)}")
 
             # 2. 拼装消息
+            debug_log(f"[handle_chat] Step2 开始拼装消息")
             messages = self.build_messages(
                 uid=uid,
                 user_input=user_input,
@@ -422,25 +429,34 @@ class GameMaster:
                 memory_text=memory_text,
                 plot_text=plot_text,
             )
+            debug_log(f"[handle_chat] Step2 消息拼装完成: messages数={len(messages)}")
 
             # 3. 调用 LLM 循环（使用 chat_model）
+            debug_log(f"[handle_chat] Step3 开始LLM调用循环: model=chat_model")
             resp_json = self.llm_chat_loop(messages, self.chat_model)
+            debug_log(f"[handle_chat] Step3 LLM循环结束: save_flag={resp_json.get('save_flag', '')}, dialog长度={len(resp_json.get('dialog', ''))}")
 
             # 4. 提取字段
             dialog = resp_json.get("dialog", "")
             player_update = resp_json.get("player_update", {})
             ui_config = resp_json.get("ui_config", {})
             save_flag = resp_json.get("save_flag", "")
+            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
 
             # 5. 落库分发
             if self.storage and save_flag:
+                debug_log(f"[handle_chat] Step5 开始落库分发: flag={save_flag}, uid={uid}")
                 try:
                     self.storage.save_dispatcher(save_flag, uid, current_area, resp_json)
                     info_log(f"落库完成: uid={uid}, flag={save_flag}")
+                    debug_log(f"[handle_chat] Step5 落库分发完成: flag={save_flag}")
                 except Exception as e:
                     error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
+            else:
+                debug_log(f"[handle_chat] Step5 跳过落库: save_flag={save_flag}, storage={'已初始化' if self.storage else '未初始化'}")
 
             # 6. 返回结果（不暴露 save_flag 给前端）
+            debug_log(f"[handle_chat] Step6 返回结果: dialog长度={len(dialog)}")
             return {
                 "dialog": dialog,
                 "player_update": player_update,
@@ -465,35 +481,46 @@ class GameMaster:
             世界演化结果字典
         """
         info_log("开始世界演化任务...")
+        debug_log("[world_tick] Step0 世界演化任务启动")
 
         try:
             # 1. 获取世界演化 prompt
             gm_cfg = self.config.get("gm", {})
             world_tick_cfg = gm_cfg.get("world_tick", {})
             world_tick_prompt = world_tick_cfg.get("prompt", "请根据当前世界状态，推演世界变化。")
+            debug_log(f"[world_tick] Step1 获取演化prompt: 长度={len(world_tick_prompt)}")
 
             # 2. 构建消息
             messages: List[Dict[str, str]] = [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": world_tick_prompt},
             ]
+            debug_log(f"[world_tick] Step2 消息构建完成: messages数={len(messages)}")
 
             # 3. 调用 LLM 循环（使用 world_model，回退到 chat_model）
             llm = self.world_model or self.chat_model
+            model_name = "world_model" if self.world_model else "chat_model(fallback)"
+            debug_log(f"[world_tick] Step3 开始LLM调用循环: model={model_name}")
             resp_json = self.llm_chat_loop(messages, llm)
+            debug_log(f"[world_tick] Step3 LLM循环结束: save_flag={resp_json.get('save_flag', '')}")
 
             # 4. 落库分发（save_flag 应为 "world_snap"）
             save_flag = resp_json.get("save_flag", "")
             if self.storage and save_flag:
+                debug_log(f"[world_tick] Step4 开始落库分发: flag={save_flag}")
                 try:
                     # 世界演化使用空 uid 和空 area
                     self.storage.save_dispatcher(save_flag, "", "world", resp_json)
                     info_log(f"世界演化落库完成: flag={save_flag}")
+                    debug_log(f"[world_tick] Step4 落库分发完成: flag={save_flag}")
                 except Exception as e:
                     error_log(f"世界演化落库失败: flag={save_flag}, 错误: {e}")
+            else:
+                debug_log(f"[world_tick] Step4 跳过落库: save_flag={save_flag}")
 
             # 5. 返回结果
             info_log("世界演化任务完成")
+            debug_log("[world_tick] Step5 世界演化任务完成")
             return resp_json
 
         except Exception as e:

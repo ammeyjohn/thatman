@@ -9,32 +9,11 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 
+# 复用 gm_logger 的 debug 开关控制日志函数
+from gm_logger import debug_log, info_log, warn_log, error_log
+
 # 配置日志
 logger = logging.getLogger(__name__)
-
-
-def debug_log(message: str):
-    """输出 DEBUG 级别日志（灰色）"""
-    logger.debug(message)
-    print(f"\033[90m[DEBUG] {message}\033[0m")
-
-
-def info_log(message: str):
-    """输出 INFO 级别日志（白色）"""
-    logger.info(message)
-    print(f"\033[97m[INFO] {message}\033[0m")
-
-
-def warn_log(message: str):
-    """输出 WARN 级别日志（黄色）"""
-    logger.warning(message)
-    print(f"\033[93m[WARN] {message}\033[0m")
-
-
-def error_log(message: str):
-    """输出 ERROR 级别日志（红色）"""
-    logger.error(message)
-    print(f"\033[91m[ERROR] {message}\033[0m")
 
 
 # skills.json 路径

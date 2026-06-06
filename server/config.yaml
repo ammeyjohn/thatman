@@ -32,6 +32,8 @@ hindsight:
 
 # GM 游戏主控配置
 gm:
+  # 调试模式开关，关闭后不输出 debug 级别日志
+  debug: true
   # 玩家日常聊天模型（常驻）
   chat_model:
     api_base: http://localhost:7778/v1

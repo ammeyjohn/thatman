@@ -36,11 +36,10 @@ import httpx
 from hindsight_memory import (
     HindsightMemoryStore,
     get_memory_store,
-    debug_log,
-    info_log,
-    warn_log,
-    error_log,
 )
+
+# 复用 gm_logger 的 debug 开关控制日志函数
+from gm_logger import debug_log, info_log, warn_log, error_log
 
 # 复用 search_episode 的 EmbeddingClient 和 QdrantClient
 from skills.search_episode import (
@@ -472,7 +471,7 @@ class GMStorage:
                     "score": float(point.score) if point.score is not None else 0.0,
                 })
 
-            info_log(f"剧情向量检索完成: query={query[:50]}..., 找到 {len(episodes)} 条")
+            info_log(f"剧情向量检索完成: query={query}, 找到 {len(episodes)} 条")
             return episodes
 
         except Exception as e:
@@ -535,7 +534,7 @@ class GMStorage:
                 points=[point],
             )
 
-            info_log(f"剧情向量入库成功: {content[:50]}...")
+            info_log(f"剧情向量入库成功: {content}")
             return True
 
         except Exception as e:
@@ -622,9 +621,9 @@ class GMStorage:
 
         result = "\n".join(parts)
         if result:
-            info_log(f"合并召回记忆成功: uid={uid}, query={query[:50]}...")
+            info_log(f"合并召回记忆成功: uid={uid}, query={query}")
         else:
-            debug_log(f"未召回相关记忆: uid={uid}, query={query[:50]}...")
+            debug_log(f"未召回相关记忆: uid={uid}, query={query}")
         return result
 
     def save_memory(self, namespace: str, summary: str) -> bool:
@@ -658,7 +657,7 @@ class GMStorage:
                 context="gm_event",
             )
             if success:
-                info_log(f"记忆保存成功: namespace={namespace}, content={summary[:50]}...")
+                info_log(f"记忆保存成功: namespace={namespace}, content={summary}")
             else:
                 warn_log(f"记忆保存返回失败: namespace={namespace}")
             return success
@@ -699,16 +698,25 @@ class GMStorage:
             return
 
         info_log(f"save_dispatcher 触发: flag={save_flag}, uid={uid}, area={current_area}")
+        debug_log(f"[save_dispatcher] 开始分发: flag={save_flag}, resp_keys={list(resp_json.keys())}")
 
         try:
             if save_flag == "player_update":
+                debug_log("[save_dispatcher] 进入 player_update 分支")
                 self._dispatch_player_update(uid, current_area, resp_json)
+                debug_log("[save_dispatcher] player_update 分支完成")
             elif save_flag == "new_entity":
+                debug_log("[save_dispatcher] 进入 new_entity 分支")
                 self._dispatch_new_entity(uid, current_area, resp_json)
+                debug_log("[save_dispatcher] new_entity 分支完成")
             elif save_flag == "world_change":
+                debug_log("[save_dispatcher] 进入 world_change 分支")
                 self._dispatch_world_change(uid, current_area, resp_json)
+                debug_log("[save_dispatcher] world_change 分支完成")
             elif save_flag == "world_snap":
+                debug_log("[save_dispatcher] 进入 world_snap 分支")
                 self._dispatch_world_snap(uid, current_area, resp_json)
+                debug_log("[save_dispatcher] world_snap 分支完成")
             else:
                 warn_log(f"未知 save_flag: {save_flag}")
         except Exception as e:
@@ -736,13 +744,16 @@ class GMStorage:
         # 保存玩家数据
         player_update = resp_json.get("player_update", {})
         if player_update:
+            debug_log(f"[_dispatch_player_update] 保存玩家数据: uid={uid}, 字段={list(player_update.keys())}")
             self.couch_save_player(uid, player_update)
+            debug_log(f"[_dispatch_player_update] 玩家数据保存完成: uid={uid}")
         else:
             warn_log(f"player_update 分支缺少 player_update 数据: uid={uid}")
 
         # 解析并保存关联关系
         link_data = player_update.get("link_data") if player_update else None
         if link_data and isinstance(link_data, list):
+            debug_log(f"[_dispatch_player_update] 保存关联关系: {len(link_data)}条")
             for link in link_data:
                 from_id = link.get("from_id", uid)
                 to_id = link.get("to_id", "")
@@ -750,16 +761,19 @@ class GMStorage:
                 desc = link.get("desc", "")
                 if to_id and rel_type:
                     self.couch_save_link(from_id, to_id, rel_type, desc)
+            debug_log(f"[_dispatch_player_update] 关联关系保存完成")
 
         # 保存个人记忆
         dialog = resp_json.get("dialog", "")
         if dialog:
             # 截取摘要，避免过长
             summary = dialog[:500] if len(dialog) > 500 else dialog
+            debug_log(f"[_dispatch_player_update] 保存个人记忆: uid={uid}, 摘要长度={len(summary)}")
             self.save_memory(f"user_{uid}", summary)
 
         # 剧情向量入库
         if dialog:
+            debug_log(f"[_dispatch_player_update] 剧情向量入库: area={current_area}")
             self.insert_plot_vector(
                 content=dialog,
                 meta={"type": "player_event", "area": current_area},
@@ -793,13 +807,17 @@ class GMStorage:
         # 自动生成唯一 entity_id
         entity_id = entity_data.get("id") or f"entity_{uuid.uuid4().hex[:12]}"
         entity_data["id"] = entity_id
+        debug_log(f"[_dispatch_new_entity] 生成实体: id={entity_id}, type={entity_data.get('entity_type', 'unknown')}")
 
         # 保存实体数据
+        debug_log(f"[_dispatch_new_entity] 保存实体数据: {entity_id}")
         self.couch_save_entity(entity_id, entity_data)
+        debug_log(f"[_dispatch_new_entity] 实体数据保存完成: {entity_id}")
 
         # 解析并保存初始关联关系
         init_link = entity_data.get("init_link")
         if init_link and isinstance(init_link, list):
+            debug_log(f"[_dispatch_new_entity] 保存初始关联: {len(init_link)}条")
             for link in init_link:
                 from_id = link.get("from_id", entity_id)
                 to_id = link.get("to_id", "")
@@ -807,15 +825,18 @@ class GMStorage:
                 desc = link.get("desc", "")
                 if to_id and rel_type:
                     self.couch_save_link(from_id, to_id, rel_type, desc)
+            debug_log(f"[_dispatch_new_entity] 初始关联保存完成")
 
         # 保存世界记忆
         entity_name = entity_data.get("name", entity_data.get("title", "未知实体"))
         entity_type = entity_data.get("type", "unknown")
+        debug_log(f"[_dispatch_new_entity] 保存世界记忆: {entity_name}")
         self.save_memory("world_global_history", f"新世界实体诞生：{entity_name}（类型：{entity_type}）")
 
         # 剧情向量入库 - 实体完整背景
         background = entity_data.get("background", entity_data.get("description", ""))
         if background:
+            debug_log(f"[_dispatch_new_entity] 实体背景入库: 长度={len(background)}")
             self.insert_plot_vector(
                 content=background,
                 meta={"type": entity_type, "area": current_area},
@@ -843,14 +864,17 @@ class GMStorage:
         # 保存变更实体
         changed_entities = resp_json.get("changed_entities", [])
         if isinstance(changed_entities, list):
+            debug_log(f"[_dispatch_world_change] 保存变更实体: {len(changed_entities)}个")
             for entity in changed_entities:
                 entity_id = entity.get("id", "")
                 if entity_id:
                     self.couch_save_entity(entity_id, entity)
+            debug_log(f"[_dispatch_world_change] 变更实体保存完成")
 
         # 保存变更关系
         changed_links = resp_json.get("changed_links", [])
         if isinstance(changed_links, list):
+            debug_log(f"[_dispatch_world_change] 保存变更关系: {len(changed_links)}条")
             for link in changed_links:
                 from_id = link.get("from_id", "")
                 to_id = link.get("to_id", "")
@@ -858,10 +882,12 @@ class GMStorage:
                 desc = link.get("desc", "")
                 if from_id and to_id and rel_type:
                     self.couch_save_link(from_id, to_id, rel_type, desc)
+            debug_log(f"[_dispatch_world_change] 变更关系保存完成")
 
         # 保存世界记忆
         change_summary = resp_json.get("change_summary", "")
         if change_summary:
+            debug_log(f"[_dispatch_world_change] 保存世界记忆: 长度={len(change_summary)}")
             self.save_memory("world_global_history", change_summary)
 
         # 剧情向量入库
@@ -869,6 +895,7 @@ class GMStorage:
         if change_plot:
             meta_tags = resp_json.get("meta_tags", {})
             meta = {"type": meta_tags.get("type", "world_change"), "area": current_area}
+            debug_log(f"[_dispatch_world_change] 变更剧情入库: area={current_area}")
             self.insert_plot_vector(content=change_plot, meta=meta)
 
     def _dispatch_world_snap(
@@ -894,18 +921,23 @@ class GMStorage:
         # 保存世界快照
         snap_data = resp_json.get("snap_data", {})
         if snap_data:
+            debug_log(f"[_dispatch_world_snap] 保存世界快照: keys={list(snap_data.keys())[:5]}")
             self.couch_save_world_snap(snap_data)
+            debug_log(f"[_dispatch_world_snap] 世界快照保存完成")
 
         # 批量保存新增实体
         new_entities = resp_json.get("new_entities", [])
         if isinstance(new_entities, list):
+            debug_log(f"[_dispatch_world_snap] 批量保存实体: {len(new_entities)}个")
             for entity in new_entities:
                 entity_id = entity.get("id", f"entity_{uuid.uuid4().hex[:12]}")
                 self.couch_save_entity(entity_id, entity)
+            debug_log(f"[_dispatch_world_snap] 批量实体保存完成")
 
         # 批量保存新增关系
         new_links = resp_json.get("new_links", [])
         if isinstance(new_links, list):
+            debug_log(f"[_dispatch_world_snap] 批量保存关系: {len(new_links)}条")
             for link in new_links:
                 from_id = link.get("from_id", "")
                 to_id = link.get("to_id", "")
@@ -913,15 +945,18 @@ class GMStorage:
                 desc = link.get("desc", "")
                 if from_id and to_id and rel_type:
                     self.couch_save_link(from_id, to_id, rel_type, desc)
+            debug_log(f"[_dispatch_world_snap] 批量关系保存完成")
 
         # 保存世界记忆 - 重大事件摘要
         event_summary = resp_json.get("event_summary", "")
         if event_summary:
+            debug_log(f"[_dispatch_world_snap] 保存世界记忆: 长度={len(event_summary)}")
             self.save_memory("world_global_history", event_summary)
 
         # 批量剧情向量入库
         plot_entries = resp_json.get("plot_entries", [])
         if isinstance(plot_entries, list):
+            debug_log(f"[_dispatch_world_snap] 批量剧情入库: {len(plot_entries)}条")
             for entry in plot_entries:
                 content = entry.get("content", "")
                 meta = entry.get("meta", {})
@@ -930,6 +965,7 @@ class GMStorage:
                     if "area" not in meta:
                         meta["area"] = current_area
                     self.insert_plot_vector(content=content, meta=meta)
+            debug_log(f"[_dispatch_world_snap] 批量剧情入库完成")
 
     # ================================================================
     # 生命周期管理

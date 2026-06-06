@@ -261,7 +261,7 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
 
             {/* Actions Buttons - 从消息数据中的actions数组 */}
             {!isPlayer && message.actions && message.actions.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div className="flex flex-wrap gap-2 mt-3 justify-start">
                 {message.actions.map((action, index) => (
                   <button
                     key={index}

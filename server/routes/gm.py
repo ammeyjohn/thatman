@@ -9,7 +9,8 @@ agents_path = Path(__file__).parent.parent / "agents"
 if str(agents_path) not in sys.path:
     sys.path.insert(0, str(agents_path))
 
-from game_master import GameMaster, debug_log, info_log, error_log
+from game_master import GameMaster
+from gm_logger import debug_log, info_log, error_log
 
 # 配置日志
 logger = logging.getLogger(__name__)
