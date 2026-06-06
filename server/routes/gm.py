@@ -1,5 +1,5 @@
 import time as time_module
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 import json
 import logging
 import sys
@@ -81,8 +81,9 @@ def gm_chat():
     current_area = data.get('current_area', '')
     session_history = data.get('session_history', [])
     req_type = data.get('req_type', 'chat')
+    stream = data.get('stream', False)
 
-    debug_log(f"收到 GM 请求 - req_type={req_type}, uid={uid}, current_area={current_area}")
+    debug_log(f"收到 GM 请求 - req_type={req_type}, uid={uid}, current_area={current_area}, stream={stream}")
     debug_log(f"user_input: {user_input}")
     debug_log(f"session_history: {json.dumps(session_history, ensure_ascii=False)}")
 
@@ -125,8 +126,57 @@ def gm_chat():
         if req_type == 'world_tick':
             info_log(f"处理 world_tick 请求 - uid={uid}")
             result = gm.world_tick_task()
+        elif stream:
+            # 流式响应
+            info_log(f"处理流式 chat 请求 - uid={uid}, current_area={current_area}")
+
+            def generate_stream():
+                dialog_text = ""
+                result_data = {}
+                for sse_event in gm.handle_chat_stream(uid, user_input, current_area, session_history):
+                    yield sse_event
+                    # 捕获 dialog_delta 和 result 事件用于保存聊天历史
+                    if sse_event.startswith("event: dialog_delta"):
+                        for line in sse_event.split("\n"):
+                            if line.startswith("data: "):
+                                try:
+                                    delta = json.loads(line[6:])
+                                    dialog_text += delta.get("content", "")
+                                except json.JSONDecodeError:
+                                    pass
+                    elif sse_event.startswith("event: result"):
+                        for line in sse_event.split("\n"):
+                            if line.startswith("data: "):
+                                try:
+                                    result_data = json.loads(line[6:])
+                                except json.JSONDecodeError:
+                                    pass
+
+                # 流式结束后保存 NPC 回复到聊天历史
+                if dialog_text or result_data:
+                    try:
+                        storage = _get_storage()
+                        now_ms = int(time_module.time() * 1000)
+                        storage.save_chat_message(
+                            uid=uid,
+                            sender="npc",
+                            content=result_data.get('dialog', dialog_text),
+                            timestamp=now_ms,
+                            actions=result_data.get('actions'),
+                            player_update=result_data.get('player_update'),
+                            ui_config=result_data.get('ui_config'),
+                        )
+                    except Exception as e:
+                        error_log(f"流式保存NPC聊天消息失败: {e}")
+
+            return Response(generate_stream(), mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no',
+                              'Connection': 'keep-alive',
+                          })
         else:
-            # 默认走 chat 逻辑
+            # 默认走 chat 逻辑（非流式）
             info_log(f"处理 chat 请求 - uid={uid}, current_area={current_area}")
             result = gm.handle_chat(uid, user_input, current_area, session_history)
 

@@ -9,9 +9,10 @@ Game Master - GM 主控类，负责游戏整体流程编排
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Generator
 
 import yaml
 from langchain_openai import ChatOpenAI
@@ -605,6 +606,279 @@ class GameMaster:
             warn_log(f"LLM 返回 JSON 解析失败: {e}, 原始内容: {content[:200]}")
             # JSON 解析失败，将原始文本作为 dialog 返回
             return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
+
+    def _extract_dialog_from_partial_json(self, accumulated: str, prev_dialog: str) -> str:
+        """
+        从部分 JSON 文本中增量提取 dialog 字段值
+
+        Args:
+            accumulated: 当前累积的完整文本
+            prev_dialog: 之前已提取的 dialog 文本
+
+        Returns:
+            新增的 dialog 文本片段（不含之前已提取的部分）
+        """
+        # 尝试匹配 "dialog" 键及其字符串值
+        # 匹配 "dialog"\s*:\s*" 后面的内容
+        pattern = r'"dialog"\s*:\s*"'
+        match = re.search(pattern, accumulated)
+        if not match:
+            return ""
+
+        # 从 dialog 值开始位置
+        value_start = match.end()
+        remaining = accumulated[value_start:]
+
+        # 提取字符串值（处理转义字符），找到结束引号
+        dialog_chars = []
+        i = 0
+        while i < len(remaining):
+            ch = remaining[i]
+            if ch == '\\':
+                # 转义字符，取下一个字符
+                if i + 1 < len(remaining):
+                    next_ch = remaining[i + 1]
+                    escape_map = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', '/': '/'}
+                    dialog_chars.append(escape_map.get(next_ch, next_ch))
+                    i += 2
+                else:
+                    # 转义字符不完整，等待更多数据
+                    break
+            elif ch == '"':
+                # 字符串结束
+                break
+            else:
+                dialog_chars.append(ch)
+                i += 1
+
+        current_dialog = ''.join(dialog_chars)
+
+        # 返回增量部分
+        if len(current_dialog) > len(prev_dialog):
+            return current_dialog[len(prev_dialog):]
+        return ""
+
+    def llm_chat_loop_stream(self, messages: List[Dict[str, str]], llm: ChatOpenAI) -> Generator[str, None, None]:
+        """
+        流式工具调用循环逻辑，以 SSE 事件格式 yield 数据
+
+        调用 LLM，如果返回包含 tool_calls 则执行工具并继续循环，
+        直到 LLM 不再返回 tool_calls 或达到最大循环次数。
+        最终响应阶段，增量提取 dialog 并流式输出。
+
+        Args:
+            messages: 消息列表
+            llm: 使用的 LLM 实例
+
+        Yields:
+            SSE 格式的事件字符串
+        """
+        debug_log(f"[llm_chat_loop_stream] 开始: messages数={len(messages)}, max_loop={self.MAX_TOOL_LOOP}")
+
+        if not llm:
+            error_log("LLM 实例为空，无法调用")
+            yield self._sse_event("error", {"message": "LLM 实例为空"})
+            return
+
+        if not self.storage:
+            error_log("storage 未初始化，工具无法执行")
+            yield self._sse_event("error", {"message": "存储层不可用"})
+            return
+
+        # 绑定工具
+        debug_log(f"[llm_chat_loop_stream] Step1 绑定工具: tools数={len(self.tools)}")
+        llm_with_tools = llm.bind_tools(self.tools)
+
+        # 转换消息为 LangChain 格式
+        debug_log("[llm_chat_loop_stream] Step2 转换消息为LangChain格式")
+        langchain_messages = self._convert_messages(messages)
+
+        for loop_count in range(self.MAX_TOOL_LOOP):
+            debug_log(f"[llm_chat_loop_stream] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
+
+            try:
+                # 使用流式调用
+                full_chunk = None
+                accumulated_content = ""
+                prev_dialog = ""
+
+                for chunk in llm_with_tools.stream(langchain_messages):
+                    # 累积 chunk
+                    if full_chunk is None:
+                        full_chunk = chunk
+                    else:
+                        full_chunk = full_chunk + chunk
+
+                    # 累积内容文本
+                    if hasattr(chunk, 'content') and chunk.content:
+                        accumulated_content += chunk.content
+
+                        # 尝试增量提取 dialog
+                        new_dialog = self._extract_dialog_from_partial_json(accumulated_content, prev_dialog)
+                        if new_dialog:
+                            prev_dialog += new_dialog
+                            yield self._sse_event("dialog_delta", {"content": new_dialog})
+
+            except Exception as e:
+                error_log(f"LLM 流式调用失败: {e}")
+                yield self._sse_event("error", {"message": f"大模型调用异常: {e}"})
+                return
+
+            # 检查是否有工具调用
+            tool_calls = getattr(full_chunk, "tool_calls", None) if full_chunk else None
+
+            if not tool_calls:
+                # 无工具调用，解析完整 JSON
+                content = full_chunk.content if full_chunk and hasattr(full_chunk, 'content') else ""
+                debug_log(f"[llm_chat_loop_stream] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
+                resp_json = self._parse_json_response(content)
+
+                # 发送完整结果事件
+                yield self._sse_event("result", {
+                    "dialog": resp_json.get("dialog", ""),
+                    "actions": resp_json.get("actions", []),
+                    "player_update": resp_json.get("player_update", {}),
+                    "ui_config": resp_json.get("ui_config", {}),
+                    "save_flag": resp_json.get("save_flag", ""),
+                })
+                return
+
+            # 有工具调用，逐个执行
+            debug_log(f"[llm_chat_loop_stream] Step4 收到 {len(tool_calls)} 个工具调用")
+
+            # 将 AIMessage 追加到消息列表
+            langchain_messages.append(full_chunk)
+
+            for idx, tool_call in enumerate(tool_calls):
+                tool_call_id = tool_call.get("id", "") if isinstance(tool_call, dict) else getattr(tool_call, "id", "")
+                function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+
+                if isinstance(tool_call, dict):
+                    tool_name = function.get("name", "")
+                    tool_args_str = function.get("arguments", "{}")
+                else:
+                    tool_name = getattr(tool_call, "name", "") or getattr(function, "name", "")
+                    tool_args_str = getattr(tool_call, "args", {}) if hasattr(tool_call, "args") else "{}"
+
+                # 解析工具参数
+                try:
+                    if isinstance(tool_args_str, str):
+                        tool_args = json.loads(tool_args_str)
+                    elif isinstance(tool_args_str, dict):
+                        tool_args = tool_args_str
+                    else:
+                        tool_args = {}
+                except json.JSONDecodeError as e:
+                    error_log(f"工具参数 JSON 解析失败: {e}")
+                    tool_args = {}
+
+                debug_log(f"[llm_chat_loop_stream] Step4.{idx+1} 执行工具: {tool_name}, 参数预览={json.dumps(tool_args, ensure_ascii=False)[:150]}")
+                info_log(f"执行工具: {tool_name}, 参数: {json.dumps(tool_args, ensure_ascii=False)[:200]}")
+
+                # 执行工具
+                try:
+                    result = match_and_execute_tool(tool_name, tool_args, self.storage)
+                    debug_log(f"[llm_chat_loop_stream] Step4.{idx+1} 工具执行完成: {tool_name}, 结果长度={len(result)}")
+                except Exception as e:
+                    error_log(f"工具执行异常: {tool_name}, 错误: {e}")
+                    result = json.dumps({"error": f"工具执行异常: {e}"}, ensure_ascii=False)
+
+                # 构造工具结果消息追加到消息列表
+                from langchain_core.messages import ToolMessage
+                langchain_messages.append(
+                    ToolMessage(content=result, tool_call_id=tool_call_id)
+                )
+
+        # 超过最大循环次数
+        error_log(f"LLM 工具调用循环超过最大次数 {self.MAX_TOOL_LOOP}")
+        yield self._sse_event("error", {"message": "系统处理超时，请稍后重试"})
+
+    def _sse_event(self, event_type: str, data: Dict[str, Any]) -> str:
+        """
+        构造 SSE 事件字符串
+
+        Args:
+            event_type: 事件类型
+            data: 事件数据
+
+        Returns:
+            SSE 格式的事件字符串
+        """
+        return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def handle_chat_stream(
+        self,
+        uid: str,
+        user_input: str,
+        current_area: str,
+        session_history: List[Dict[str, str]],
+    ) -> Generator[str, None, None]:
+        """
+        玩家聊天流式串行流程入口（req_type=chat, stream=True）
+
+        流程：pre_context -> build_messages -> llm_chat_loop_stream -> 落库分发 -> done
+
+        Args:
+            uid: 玩家唯一标识
+            user_input: 用户输入文本
+            current_area: 当前区域
+            session_history: 前端本地短时对话历史
+
+        Yields:
+            SSE 格式的事件字符串
+        """
+        info_log(f"流式处理玩家聊天: uid={uid}, area={current_area}, input={user_input}")
+        debug_log(f"[handle_chat_stream] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
+
+        try:
+            # 1. 预拉外围数据
+            debug_log(f"[handle_chat_stream] Step1 开始预拉外围数据: uid={uid}")
+            memory_text, plot_text = self.pre_context(uid, user_input)
+            debug_log(f"[handle_chat_stream] Step1 预拉完成: memory长度={len(memory_text)}, plot长度={len(plot_text)}")
+
+            # 2. 拼装消息
+            debug_log(f"[handle_chat_stream] Step2 开始拼装消息")
+            messages = self.build_messages(
+                uid=uid,
+                user_input=user_input,
+                current_area=current_area,
+                session_history=session_history,
+                memory_text=memory_text,
+                plot_text=plot_text,
+            )
+            debug_log(f"[handle_chat_stream] Step2 消息拼装完成: messages数={len(messages)}")
+
+            # 3. 流式调用 LLM 循环
+            debug_log(f"[handle_chat_stream] Step3 开始LLM流式调用循环: model=chat_model")
+            resp_json = {}
+            for sse_event in self.llm_chat_loop_stream(messages, self.chat_model):
+                yield sse_event
+                # 捕获 result 事件的数据用于后续落库
+                if sse_event.startswith("event: result"):
+                    # 提取 data 行
+                    for line in sse_event.split("\n"):
+                        if line.startswith("data: "):
+                            try:
+                                resp_json = json.loads(line[6:])
+                            except json.JSONDecodeError:
+                                pass
+
+            # 4. 落库分发
+            save_flag = resp_json.get("save_flag", "")
+            if self.storage and save_flag:
+                debug_log(f"[handle_chat_stream] Step4 开始落库分发: flag={save_flag}, uid={uid}")
+                try:
+                    self.storage.save_dispatcher(save_flag, uid, current_area, resp_json)
+                    info_log(f"落库完成: uid={uid}, flag={save_flag}")
+                except Exception as e:
+                    error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
+
+            # 5. 发送完成事件
+            yield self._sse_event("done", {})
+
+        except Exception as e:
+            error_log(f"流式处理玩家聊天异常: uid={uid}, 错误: {e}")
+            yield self._sse_event("error", {"message": f"系统处理异常: {e}"})
 
 
 # ================================================================

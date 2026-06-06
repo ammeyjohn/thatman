@@ -57,15 +57,18 @@ const initialStreamStats: StreamStats = {
 };
 
 /**
- * 调用 /gm/chat 接口，处理 GM 响应
+ * 流式调用 /gm/chat 接口，通过 SSE 逐步接收 GM 响应
  */
-async function callGmChat(
+async function streamGmChat(
   uid: string,
   userInput: string,
   currentArea: string,
   sessionHistory: { role: string; content: string }[],
-  signal?: AbortSignal,
-): Promise<{ dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown> }> {
+  signal: AbortSignal,
+  onDialogDelta: (content: string) => void,
+  onResult: (result: { dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown> }) => void,
+  onError: (message: string) => void,
+): Promise<void> {
   const response = await fetch(`${config.API_BASE_URL}/gm/chat`, {
     method: 'POST',
     headers: {
@@ -77,6 +80,7 @@ async function callGmChat(
       current_area: currentArea,
       session_history: sessionHistory,
       req_type: 'chat',
+      stream: true,
     }),
     signal,
   });
@@ -87,7 +91,55 @@ async function callGmChat(
     throw new Error(errorMsg);
   }
 
-  return response.json();
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('无法获取响应流');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // 解析 SSE 事件
+    const lines = buffer.split('\n');
+    // 保留最后一行（可能不完整）
+    buffer = lines.pop() || '';
+
+    let currentEvent = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const dataStr = line.slice(6);
+        try {
+          const data = JSON.parse(dataStr);
+
+          switch (currentEvent) {
+            case 'dialog_delta':
+              onDialogDelta(data.content || '');
+              break;
+            case 'result':
+              onResult(data);
+              break;
+            case 'error':
+              onError(data.message || '未知错误');
+              break;
+            case 'done':
+              // 流结束
+              break;
+          }
+        } catch {
+          // 忽略解析错误
+        }
+        currentEvent = '';
+      }
+    }
+  }
 }
 
 /**
@@ -294,6 +346,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const startTime = Date.now();
+    let outputTokenCount = 0;
 
     try {
       // 构建 session_history：取最近 10 轮对话（排除系统消息）
@@ -314,57 +367,69 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .pop();
       const userInput = lastUserMessage ? lastUserMessage.content : '';
 
-      const result = await callGmChat(
+      await streamGmChat(
         getOrCreateUserId(),
         userInput,
         currentArea,
         sessionHistory,
         abortController.signal,
-      );
+        // onDialogDelta
+        (delta) => {
+          outputTokenCount += Math.ceil(delta.length * 0.5);
+          const { messages: currentMessages } = get();
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          if (lastMsg && lastMsg.sender === 'npc') {
+            const newContent = lastMsg.content + delta;
+            updateLastMessage(newContent);
+            set({ streamingContent: newContent });
 
-      const outputTokens = Math.ceil(result.dialog.length * 0.5);
-      const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
-
-      set((state) => ({
-        streamStats: {
-          ...state.streamStats,
-          outputTokens,
-          tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+            const elapsedSeconds = (Date.now() - startTime) / 1000;
+            const tokensPerSecond = elapsedSeconds > 0 ? outputTokenCount / elapsedSeconds : 0;
+            set((state) => ({
+              streamStats: {
+                ...state.streamStats,
+                outputTokens: outputTokenCount,
+                tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+              },
+            }));
+          }
         },
-      }));
+        // onResult
+        (result) => {
+          const actions = Array.isArray(result.actions)
+            ? result.actions.filter((a): a is string => typeof a === 'string')
+            : [];
+          if (actions.length > 0) {
+            updateLastMessageActions(actions);
+          }
 
-      // 更新消息内容
-      updateLastMessage(result.dialog);
-      set({ streamingContent: result.dialog });
+          updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
+          updateLastMessageRawJSON(JSON.stringify(result, null, 2));
 
-      // 提取 actions
-      const actions = Array.isArray(result.actions)
-        ? result.actions.filter((a): a is string => typeof a === 'string')
-        : [];
-      if (actions.length > 0) {
-        updateLastMessageActions(actions);
-      }
+          const uiConfig = result.ui_config || {};
+          const updates: Partial<ChatState> = {};
+          if (typeof uiConfig.location === 'string') {
+            updates.lastLocation = uiConfig.location;
+          }
+          if (typeof uiConfig.time === 'string') {
+            updates.lastTime = uiConfig.time;
+          }
+          if (updates.lastLocation || updates.lastTime) {
+            set(updates);
+          }
 
-      // 保存解析后的 JSON
-      updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
-      updateLastMessageRawJSON(JSON.stringify(result, null, 2));
-
-      // 更新 location 和 time
-      const uiConfig = result.ui_config || {};
-      const updates: Partial<ChatState> = {};
-      if (typeof uiConfig.location === 'string') {
-        updates.lastLocation = uiConfig.location;
-      }
-      if (typeof uiConfig.time === 'string') {
-        updates.lastTime = uiConfig.time;
-      }
-      if (updates.lastLocation || updates.lastTime) {
-        set(updates);
-      }
-
-      // 更新 gameStore
-      applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
+          applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
+        },
+        // onError
+        (message) => {
+          console.error('流式响应错误:', message);
+          const { messages: currentMessages } = get();
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          if (lastMsg && lastMsg.sender === 'npc' && !lastMsg.content) {
+            updateLastMessage(`错误: ${message}`);
+          }
+        },
+      );
 
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
@@ -485,6 +550,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const startTime = Date.now();
+    let outputTokenCount = 0;
 
     try {
       // 构建 session_history：取最近 10 轮对话（排除系统消息）
@@ -499,57 +565,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 获取当前位置信息
       const currentArea = useGameStore.getState().world.location;
 
-      const result = await callGmChat(
+      await streamGmChat(
         getOrCreateUserId(),
         content,
         currentArea,
         sessionHistory,
         abortController.signal,
-      );
+        // onDialogDelta: 增量更新消息内容
+        (delta) => {
+          outputTokenCount += Math.ceil(delta.length * 0.5);
+          const { messages: currentMessages } = get();
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          if (lastMsg && lastMsg.sender === 'npc') {
+            const newContent = lastMsg.content + delta;
+            updateLastMessage(newContent);
+            set({ streamingContent: newContent });
 
-      const outputTokens = Math.ceil(result.dialog.length * 0.5);
-      const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const tokensPerSecond = elapsedSeconds > 0 ? outputTokens / elapsedSeconds : 0;
-
-      set((state) => ({
-        streamStats: {
-          ...state.streamStats,
-          outputTokens,
-          tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+            // 更新流式统计
+            const elapsedSeconds = (Date.now() - startTime) / 1000;
+            const tokensPerSecond = elapsedSeconds > 0 ? outputTokenCount / elapsedSeconds : 0;
+            set((state) => ({
+              streamStats: {
+                ...state.streamStats,
+                outputTokens: outputTokenCount,
+                tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+              },
+            }));
+          }
         },
-      }));
+        // onResult: 收到完整结果
+        (result) => {
+          // 提取 actions
+          const actions = Array.isArray(result.actions)
+            ? result.actions.filter((a): a is string => typeof a === 'string')
+            : [];
+          if (actions.length > 0) {
+            updateLastMessageActions(actions);
+          }
 
-      // 更新消息内容
-      updateLastMessage(result.dialog);
-      set({ streamingContent: result.dialog });
+          // 保存解析后的 JSON
+          updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
+          updateLastMessageRawJSON(JSON.stringify(result, null, 2));
 
-      // 提取 actions
-      const actions = Array.isArray(result.actions)
-        ? result.actions.filter((a): a is string => typeof a === 'string')
-        : [];
-      if (actions.length > 0) {
-        updateLastMessageActions(actions);
-      }
+          // 更新 location 和 time
+          const uiConfig = result.ui_config || {};
+          const updates: Partial<ChatState> = {};
+          if (typeof uiConfig.location === 'string') {
+            updates.lastLocation = uiConfig.location;
+          }
+          if (typeof uiConfig.time === 'string') {
+            updates.lastTime = uiConfig.time;
+          }
+          if (updates.lastLocation || updates.lastTime) {
+            set(updates);
+          }
 
-      // 保存解析后的 JSON
-      updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
-      updateLastMessageRawJSON(JSON.stringify(result, null, 2));
-
-      // 更新 location 和 time
-      const uiConfig = result.ui_config || {};
-      const updates: Partial<ChatState> = {};
-      if (typeof uiConfig.location === 'string') {
-        updates.lastLocation = uiConfig.location;
-      }
-      if (typeof uiConfig.time === 'string') {
-        updates.lastTime = uiConfig.time;
-      }
-      if (updates.lastLocation || updates.lastTime) {
-        set(updates);
-      }
-
-      // 更新 gameStore
-      applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
+          // 更新 gameStore
+          applyGmResponseToGameStore(result.player_update || {}, result.ui_config || {});
+        },
+        // onError
+        (message) => {
+          console.error('流式响应错误:', message);
+          const { messages: currentMessages } = get();
+          const lastMsg = currentMessages[currentMessages.length - 1];
+          if (lastMsg && lastMsg.sender === 'npc' && !lastMsg.content) {
+            updateLastMessage(`错误: ${message}`);
+          }
+        },
+      );
 
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {

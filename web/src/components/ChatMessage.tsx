@@ -23,7 +23,7 @@ interface ChatMessageProps {
 }
 
 export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
-  const { deleteMessage, editMessage, regenerateMessage } = useChatStore();
+  const { deleteMessage, editMessage, regenerateMessage, isLoading } = useChatStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [copied, setCopied] = useState(false);
@@ -238,6 +238,9 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                   >
                     {formatTextWithLineBreaks(message.content)}
                   </ReactMarkdown>
+                  {isLoading && message.sender === 'npc' && (
+                    <span className="inline-block w-2 h-4 bg-[#3d9a9a] animate-pulse ml-1 align-middle" />
+                  )}
                 </div>
               )}
             </div>
