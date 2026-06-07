@@ -6,7 +6,7 @@ Hindsight Memory Store - 记忆库存储模块 (纯同步版本)
 
 前置条件:
     pip install httpx
-    启动 Hindsight 服务 (默认端口 8888)
+    启动 Hindsight 服务 (默认端口 9998)
 
 用法:
     from hindsight_memory import HindsightMemoryStore
@@ -15,7 +15,7 @@ Hindsight Memory Store - 记忆库存储模块 (纯同步版本)
     world_store = HindsightMemoryStore(
         bank_id="world",
         bank_name="青墟世界记忆库",
-        base_url="http://localhost:8888",
+        base_url="http://localhost:9998",
     )
 
     # 存储记忆
@@ -80,7 +80,7 @@ class HindsightMemoryStore:
         self,
         bank_id: str,
         bank_name: Optional[str] = None,
-        base_url: str = "http://localhost:8888",
+        base_url: str = "http://localhost:9998",
         api_key: Optional[str] = None,
         short_term_window: int = 6,
         auto_retain: bool = False,
@@ -492,7 +492,7 @@ def get_memory_store(
         HindsightMemoryStore 实例
     """
     if base_url is None:
-        base_url = os.getenv("HINDSIGHT_BASE_URL", "http://localhost:8888")
+        base_url = os.getenv("HINDSIGHT_BASE_URL", "http://localhost:9998")
     if api_key is None:
         api_key = os.getenv("HINDSIGHT_API_KEY")
 
@@ -536,7 +536,7 @@ def get_world_memory_store(
     return HindsightMemoryStore(
         bank_id=world_bank,
         bank_name="青墟世界记忆库",
-        base_url=base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:8888"),
+        base_url=base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:9998"),
         api_key=api_key or os.getenv("HINDSIGHT_API_KEY"),
         mission=(
             "《青墟灵修志》世界记忆库。存储上古劫后遗落修仙世界的完整设定，"
@@ -570,7 +570,7 @@ def get_character_memory_store(
     return HindsightMemoryStore(
         bank_id=f"char_{character_id}",
         bank_name=f"角色 {character_id} 的记忆",
-        base_url=base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:8888"),
+        base_url=base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:9998"),
         api_key=api_key or os.getenv("HINDSIGHT_API_KEY"),
         short_term_window=10,
         mission=f"角色 {character_id} 的个人记忆库，存储其经历、人际关系、成长历程等重要事件。",

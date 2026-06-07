@@ -70,8 +70,7 @@ class GMStorage:
         self.config = config
 
         # ── CouchDB 配置 ──
-        gm_cfg = config.get("gm", {})
-        couch_cfg = gm_cfg.get("couchdb", {})
+        couch_cfg = config.get("couchdb", {})
         self._couch_url: str = couch_cfg.get("url", "http://localhost:5984").rstrip("/")
         self._couch_db_prefix: str = couch_cfg.get("db_prefix", "game_")
         self._couch_user: str = couch_cfg.get("user", "admin")
@@ -98,13 +97,13 @@ class GMStorage:
         self._ensure_couch_dbs()
 
         # ── Qdrant 配置 ──
-        qdrant_cfg = gm_cfg.get("qdrant", {})
+        qdrant_cfg = config.get("qdrant", {})
         self._qdrant_collection: str = qdrant_cfg.get("collection", "episode")
 
         # ── Hindsight 配置 ──
-        hindsight_cfg = gm_cfg.get("hindsight", {})
+        hindsight_cfg = config.get("hindsight", {})
         self._hindsight_base_url: str = hindsight_cfg.get(
-            "base_url", "http://localhost:8888"
+            "base_url", "http://localhost:9998"
         )
         self._hindsight_api_key: Optional[str] = hindsight_cfg.get("api_key")
 

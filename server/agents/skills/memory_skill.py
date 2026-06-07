@@ -68,7 +68,7 @@ def _load_hindsight_config() -> Dict[str, Any]:
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return config.get("gm", {}).get("hindsight", {})
+        return config.get("hindsight", {})
     except Exception as e:
         error_log(f"加载 Hindsight 配置失败: {e}")
         return {}
@@ -79,7 +79,7 @@ def _load_hindsight_config() -> Dict[str, Any]:
 # ───────────────────────────────────────────────
 
 _memory_stores: Dict[str, HindsightMemoryStore] = {}
-_hindsight_base_url: str = "http://localhost:8888"
+_hindsight_base_url: str = "http://localhost:9998"
 _hindsight_api_key: Optional[str] = None
 _config_loaded: bool = False
 
@@ -91,7 +91,7 @@ def _ensure_config() -> None:
         return
 
     cfg = _load_hindsight_config()
-    _hindsight_base_url = cfg.get("base_url", "http://localhost:8888")
+    _hindsight_base_url = cfg.get("base_url", "http://localhost:9998")
     _hindsight_api_key = cfg.get("api_key")
     _config_loaded = True
     info_log(f"Hindsight 配置加载完成: base_url={_hindsight_base_url}")

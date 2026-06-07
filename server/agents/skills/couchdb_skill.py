@@ -68,7 +68,7 @@ def _load_couchdb_config() -> Dict[str, Any]:
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return config.get("gm", {}).get("couchdb", {})
+        return config.get("couchdb", {})
     except Exception as e:
         error_log(f"加载 CouchDB 配置失败: {e}")
         return {}

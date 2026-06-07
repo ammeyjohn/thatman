@@ -111,7 +111,7 @@ class MemoryManager:
         self.character_id = character_id
         self.user_id = user_id
         self.config = config or MemoryConfig()
-        self.base_url = base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:8888")
+        self.base_url = base_url or os.getenv("HINDSIGHT_BASE_URL", "http://localhost:9998")
         self.api_key = api_key or os.getenv("HINDSIGHT_API_KEY")
 
         # 记忆库实例

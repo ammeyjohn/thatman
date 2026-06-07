@@ -128,7 +128,7 @@ class ChatAgent:
         """初始化记忆管理器"""
         try:
             hindsight_config = self.config.get("hindsight", {})
-            base_url = hindsight_config.get("base_url", "http://localhost:8888")
+            base_url = hindsight_config.get("base_url", "http://localhost:9998")
             api_key = hindsight_config.get("api_key")
 
             # 也支持从环境变量读取

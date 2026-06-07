@@ -49,8 +49,7 @@ class LayoutGenerator:
 
     def _init_layout_model(self) -> None:
         """初始化布局生成模型"""
-        gm_cfg = self.config.get("gm", {})
-        layout_cfg = gm_cfg.get("layout_model", {})
+        layout_cfg = self.config.get("layout_model", {})
 
         api_base = os.getenv("GM_LAYOUT_API_BASE", layout_cfg.get("api_base", "http://localhost:7777/v1"))
         api_key = os.getenv("GM_LAYOUT_API_KEY", layout_cfg.get("api_key", "not-needed"))

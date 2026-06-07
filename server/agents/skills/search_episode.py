@@ -64,8 +64,25 @@ def error_log(message: str):
 # 默认配置
 # ───────────────────────────────────────────────
 
-DEFAULT_QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-DEFAULT_COLLECTION = os.getenv("QDRANT_COLLECTION", "episode")
+def _load_qdrant_config() -> Dict[str, Any]:
+    """从 config.yaml 加载 Qdrant 配置"""
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "config.yaml",
+    )
+    try:
+        import yaml
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        return config.get("qdrant", {})
+    except Exception as e:
+        error_log(f"加载 Qdrant 配置失败: {e}")
+        return {}
+
+
+_qdrant_cfg = _load_qdrant_config()
+DEFAULT_QDRANT_URL = os.getenv("QDRANT_URL", _qdrant_cfg.get("url", "http://localhost:6333"))
+DEFAULT_COLLECTION = os.getenv("QDRANT_COLLECTION", _qdrant_cfg.get("collection", "episode"))
 
 _DEFAULT_MODEL_DIR = Path.home() / ".cache" / "modelscope" / "hub" / "models"
 DEFAULT_MODEL_NAME = os.getenv(

@@ -85,13 +85,12 @@ class GameMaster:
         """
         初始化聊天模型（常驻，用于玩家聊天）
 
-        从 config.yaml 的 gm.chat_model 段读取配置，
+        从 config.yaml 的 chat_model 段读取配置，
         支持环境变量覆盖。
         """
-        gm_cfg = self.config.get("gm", {})
-        chat_cfg = gm_cfg.get("chat_model", {})
+        chat_cfg = self.config.get("chat_model", {})
 
-        api_base = os.getenv("GM_CHAT_API_BASE", chat_cfg.get("api_base", "http://localhost:8080/v1"))
+        api_base = os.getenv("GM_CHAT_API_BASE", chat_cfg.get("api_base", "http://localhost:7778/v1"))
         api_key = os.getenv("GM_CHAT_API_KEY", chat_cfg.get("api_key", "not-needed"))
         model_name = os.getenv("GM_CHAT_MODEL_NAME", chat_cfg.get("model_name", "Qwen3.6-35B-A3B"))
         temperature = float(os.getenv("GM_CHAT_TEMPERATURE", chat_cfg.get("temperature", 0.65)))
@@ -115,14 +114,13 @@ class GameMaster:
         """
         初始化世界模型（按需，用于世界演化）
 
-        从 config.yaml 的 gm.world_model 段读取配置，
+        从 config.yaml 的 world_model 段读取配置，
         支持环境变量覆盖。
         初始化失败时回退到 chat_model。
         """
-        gm_cfg = self.config.get("gm", {})
-        world_cfg = gm_cfg.get("world_model", {})
+        world_cfg = self.config.get("world_model", {})
 
-        api_base = os.getenv("GM_WORLD_API_BASE", world_cfg.get("api_base", "http://localhost:8081/v1"))
+        api_base = os.getenv("GM_WORLD_API_BASE", world_cfg.get("api_base", "http://localhost:7779/v1"))
         api_key = os.getenv("GM_WORLD_API_KEY", world_cfg.get("api_key", "not-needed"))
         model_name = os.getenv("GM_WORLD_MODEL_NAME", world_cfg.get("model_name", "Qwen3.6-27B-MTP"))
         temperature = float(os.getenv("GM_WORLD_TEMPERATURE", world_cfg.get("temperature", 0.7)))
