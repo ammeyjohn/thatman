@@ -12,6 +12,10 @@ from typing import List, Dict, Any
 # 复用 gm_logger 的 debug 开关控制日志函数
 from gm_logger import debug_log, info_log, warn_log, error_log
 
+# 导入 read_doc 和 find_skill 模块
+from skills.read_doc import read_doc as _read_doc, list_available_docs as _list_available_docs, search_doc_content as _search_doc_content
+from skills.find_skill import list_all_skills as _list_all_skills, search_skill as _search_skill, get_skill_info as _get_skill_info
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -44,9 +48,9 @@ def _load_tools_from_json() -> List[Dict[str, Any]]:
 
         tools = []
         for skill in data.get("skills", []):
-            tool_schema = skill.get("tool_schema")
-            if tool_schema:
-                tools.append(tool_schema)
+            tool_schemas = skill.get("tool_schemas")
+            if tool_schemas and isinstance(tool_schemas, list):
+                tools.extend(tool_schemas)
 
         info_log(f"从 skills.json 加载 {len(tools)} 个工具 Schema")
         return tools
@@ -86,6 +90,38 @@ def match_and_execute_tool(tool_name: str, tool_args: Dict[str, Any], storage) -
     """
     try:
         debug_log(f"匹配工具: {tool_name}, 参数: {json.dumps(tool_args, ensure_ascii=False)}")
+
+        # ---- 文档读取操作 ----
+        if tool_name == "read_doc":
+            filename = tool_args["filename"]
+            result = _read_doc(filename)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "list_available_docs":
+            result = _list_available_docs()
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "search_doc_content":
+            keyword = tool_args["keyword"]
+            result = _search_doc_content(keyword)
+            return json.dumps(result, ensure_ascii=False)
+
+        # ---- 技能查找操作 ----
+        if tool_name == "list_all_skills":
+            include_details = tool_args.get("include_details", True)
+            result = _list_all_skills(include_details)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "search_skill":
+            keyword = tool_args["keyword"]
+            search_in_description = tool_args.get("search_in_description", True)
+            result = _search_skill(keyword, search_in_description)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "get_skill_info":
+            skill_name = tool_args["skill_name"]
+            result = _get_skill_info(skill_name)
+            return json.dumps(result, ensure_ascii=False)
 
         # ---- CouchDB 玩家操作 ----
         if tool_name == "couch_get_player":

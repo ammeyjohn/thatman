@@ -2,7 +2,7 @@
   "skills": [
     {
       "name": "read_doc",
-      "description": "读取文档文件内容",
+      "description": "读取文档文件内容，用于获取游戏规则、世界设定、配置等文档信息",
       "module": "skills.read_doc",
       "category": "knowledge",
       "functions": {
@@ -25,7 +25,48 @@
           },
           "returns": "Dict[str, Any] - 包含搜索结果的字典"
         }
-      }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_doc",
+            "description": "读取指定文档文件的完整内容，用于获取游戏规则、世界设定、境界配置、物品配置、功法配置、宗门配置等文档信息。可用文档：world_config.md(世界基础设定)、game_manual.md(游戏手册)、level_config.md(境界属性配置)、item_config.md(物品资源配置)、skill_config.md(功法配置)、npc_config.md(NPC角色配置)、guild_config.md(宗门势力配置)、task_config.md(任务等级配置)、世界观.md(世界观详细设定)",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "filename": {"type": "string", "description": "文档文件名，如 'world_config.md'、'level_config.md'、'guild_config.md'、'世界观.md' 等"}
+              },
+              "required": ["filename"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "list_available_docs",
+            "description": "列出所有可用的文档文件及其标题",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "search_doc_content",
+            "description": "在所有文档中搜索包含关键词的内容，用于快速定位规则或设定信息",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "keyword": {"type": "string", "description": "搜索关键词，如'突破'、'灵根'、'宗门'等"}
+              },
+              "required": ["keyword"]
+            }
+          }
+        }
+      ]
     },
     {
       "name": "find_skill",
@@ -55,7 +96,51 @@
           },
           "returns": "Dict[str, Any] - 包含 skill 详细信息的字典"
         }
-      }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "list_all_skills",
+            "description": "列出所有可用的 skills 功能及其描述",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "include_details": {"type": "boolean", "description": "是否包含详细信息，默认为 True", "default": true}
+              }
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "search_skill",
+            "description": "根据关键词搜索可用的 skill 功能",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "keyword": {"type": "string", "description": "搜索关键词"},
+                "search_in_description": {"type": "boolean", "description": "是否在描述中搜索，默认为 True", "default": true}
+              },
+              "required": ["keyword"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "get_skill_info",
+            "description": "获取指定 skill 的详细信息，包括可用函数和参数说明",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "skill_name": {"type": "string", "description": "skill 名称，如 'read_doc'、'couchdb_skill' 等"}
+              },
+              "required": ["skill_name"]
+            }
+          }
+        }
+      ]
     },
     {
       "name": "search_episode",
