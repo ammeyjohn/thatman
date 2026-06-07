@@ -20,13 +20,15 @@ services:
       HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
       HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: http://host.docker.internal:8888/v1
       HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: dummy
-      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: bge-m3
+      # HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: bge-m3
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: qwen3-embedding-0.6b-fp16
 
       # 外部 Reranker 接口
       HINDSIGHT_API_RERANK_PROVIDER: openai
       HINDSIGHT_API_RERANK_OPENAI_BASE_URL: http://host.docker.internal:8888/v1
       HINDSIGHT_API_RERANK_OPENAI_API_KEY: dummy
-      HINDSIGHT_API_RERANK_OPENAI_MODEL: bge-reranker-v2-m3
+      # HINDSIGHT_API_RERANK_OPENAI_MODEL: bge-reranker-v2-m3
+      HINDSIGHT_API_RERANK_OPENAI_MODEL: qwen3-reranker-0.6b-fp16
 
       HF_ENDPOINT: https://hf-mirror.com
       HF_HOME: /home/hindsight/.cache/huggingface

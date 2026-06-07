@@ -25,7 +25,7 @@ llm:
 
 # hindsight 记忆库配置
 hindsight:
-  base_url: http://localhost:8888
+  base_url: http://localhost:9998
   api_key: null
   # 世界 bank 名称，用于存储世界演化相关的长期记忆
   world_bank: world
@@ -67,7 +67,7 @@ gm:
     collection: episode
   # Hindsight 记忆库配置
   hindsight:
-    base_url: http://localhost:8888
+    base_url: http://localhost:9998
     api_key: null
   # 世界演化配置
   world_tick:
