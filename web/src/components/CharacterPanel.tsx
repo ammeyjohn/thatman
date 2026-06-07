@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
+import { useAuthStore } from '../stores/authStore';
+import { useNavigate } from 'react-router-dom';
 import { StatusBar } from './StatusBar';
-import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, Package } from 'lucide-react';
+import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, Package, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
 
 const equipmentIcons: Record<string, React.ReactNode> = {
   sword: <Sword className="w-4 h-4" />,
@@ -11,6 +13,9 @@ const equipmentIcons: Record<string, React.ReactNode> = {
 
 export function CharacterPanel() {
   const { character, characterLayout } = useGameStore();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // 注入实时数据到 window.__LAYOUT_DATA__，供 HTML 布局中的 JS 读取
   React.useEffect(() => {
@@ -19,15 +24,68 @@ export function CharacterPanel() {
     }
   }, [character, characterLayout]);
 
+  // 点击外部关闭菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [menuOpen]);
+
+  const handleLogout = () => {
+    useAuthStore.getState().logout();
+    navigate('/login');
+  };
+
   return (
     <div className="w-[280px] bg-[#0d1f1f] border-r border-[#2d5a5a]/30 flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-[#2d5a5a]/30 bg-[#0d1f1f]">
+      <div className="p-4 border-b border-[#2d5a5a]/30 bg-[#0d1f1f] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-[#c9a227]" />
           <h2 className="text-[#e8e4dc] font-bold text-lg" style={{ fontFamily: 'Noto Serif SC, serif' }}>
             角色状态
           </h2>
+        </div>
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-[#1a2f2f] border border-[#2d5a5a]/50 text-[#5a7a7a] hover:text-[#c9a227] hover:border-[#c9a227]/50 transition-colors duration-200 cursor-pointer"
+            title="更多选项"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 w-36 bg-[#1a2f2f] border border-[#2d5a5a]/50 rounded-md shadow-lg shadow-black/30 py-1 z-50">
+              <button
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#a0c0c0] hover:bg-[#2d5a5a]/30 hover:text-[#e8e4dc] transition-colors duration-150 cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5" />
+                角色信息
+              </button>
+              <button
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#a0c0c0] hover:bg-[#2d5a5a]/30 hover:text-[#e8e4dc] transition-colors duration-150 cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                设置
+              </button>
+              <div className="border-t border-[#2d5a5a]/30 my-1" />
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#E74C3C] hover:bg-[#E74C3C]/10 transition-colors duration-150 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                退出
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

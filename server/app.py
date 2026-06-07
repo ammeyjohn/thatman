@@ -5,6 +5,7 @@ from flask_cors import CORS
 import yaml
 from routes.chat import chat_bp
 from routes.gm import gm_bp
+from routes.auth import auth_bp
 
 
 def load_yaml_config() -> dict:
@@ -36,6 +37,7 @@ def create_app():
 
     app.register_blueprint(chat_bp, url_prefix='/v1')
     app.register_blueprint(gm_bp, url_prefix='/v1')
+    app.register_blueprint(auth_bp, url_prefix='/v1')
 
     @app.route('/health')
     def health_check():

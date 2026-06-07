@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { ChatMessage } from '../types';
 import { config } from '../config';
-import { getOrCreateUserId } from '../lib/user';
+import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 import { useGameStore } from './gameStore';
 
 let messageIdCounter = 0;
@@ -71,9 +71,7 @@ async function streamGmChat(
 ): Promise<void> {
   const response = await fetch(`${config.API_BASE_URL}/gm/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getAuthHeaders(),
     body: JSON.stringify({
       uid,
       user_input: userInput,
@@ -466,7 +464,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!uid) return;
 
     try {
-      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=100`);
+      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=100`, {
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) {
         console.error('加载聊天历史失败:', response.status);
         return;
@@ -505,6 +505,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}`, {
         method: 'DELETE',
+        headers: getAuthHeaders(),
       });
       if (response.ok) {
         set({ messages: [] });

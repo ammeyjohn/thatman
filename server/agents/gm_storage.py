@@ -79,6 +79,7 @@ class GMStorage:
 
         # CouchDB 数据库名
         self._db_players: str = f"{self._couch_db_prefix}players"
+        self._db_users: str = f"{self._couch_db_prefix}users"
         self._db_entities: str = f"{self._couch_db_prefix}entities"
         self._db_links: str = f"{self._couch_db_prefix}links"
         self._db_world_snaps: str = f"{self._couch_db_prefix}world_snaps"
@@ -120,6 +121,7 @@ class GMStorage:
         """确保 CouchDB 所需数据库存在，不存在则创建"""
         db_names = [
             self._db_players,
+            self._db_users,
             self._db_entities,
             self._db_links,
             self._db_world_snaps,
@@ -190,6 +192,120 @@ class GMStorage:
             json=json_data,
         )
         return response
+
+    # ================================================================
+    # CouchDB 用户操作
+    # ================================================================
+
+    def couch_get_user(self, username: str) -> dict:
+        """
+        通过用户名查询用户记录
+
+        使用 Mango 查询在 users 数据库中查找匹配的 username 文档。
+
+        Args:
+            username: 用户名
+
+        Returns:
+            用户数据字典，失败返回空字典
+        """
+        try:
+            body = {
+                "selector": {"username": username},
+                "limit": 1,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_users}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                if docs:
+                    debug_log(f"查询用户成功: {username}")
+                    return docs[0]
+                else:
+                    debug_log(f"用户不存在: {username}")
+                    return {}
+            else:
+                warn_log(f"查询用户失败: {username}, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"查询用户异常: {username}, 错误: {e}")
+            return {}
+
+    def couch_save_user(self, username: str, user_data: dict) -> dict:
+        """
+        保存用户记录，使用 username 作为文档 ID
+
+        如果文档已存在，自动携带 _rev 进行更新。
+
+        Args:
+            username: 用户名，同时作为文档 ID
+            user_data: 用户数据
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            # 先查询现有文档获取 _rev
+            resp = self._couch_request("GET", f"/{self._db_users}/{username}")
+            if resp.status_code == 200:
+                existing = resp.json()
+                if "_rev" in existing:
+                    user_data["_rev"] = existing["_rev"]
+            elif resp.status_code != 404:
+                warn_log(f"查询用户文档失败: {username}, 状态码: {resp.status_code}")
+
+            resp = self._couch_request("PUT", f"/{self._db_users}/{username}", json_data=user_data)
+            if resp.status_code in (201, 202):
+                info_log(f"保存用户记录成功: {username}")
+                return resp.json()
+            else:
+                warn_log(f"保存用户记录失败: {username}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存用户记录异常: {username}, 错误: {e}")
+            return {}
+
+    def couch_get_user_by_uid(self, uid: str) -> dict:
+        """
+        通过 uid 查询用户记录
+
+        使用 Mango 查询在 users 数据库中查找匹配的 uid 文档。
+
+        Args:
+            uid: 用户唯一标识
+
+        Returns:
+            用户数据字典，失败返回空字典
+        """
+        try:
+            body = {
+                "selector": {"uid": uid},
+                "limit": 1,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_users}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                if docs:
+                    debug_log(f"通过 uid 查询用户成功: {uid}")
+                    return docs[0]
+                else:
+                    debug_log(f"uid 对应用户不存在: {uid}")
+                    return {}
+            else:
+                warn_log(f"通过 uid 查询用户失败: {uid}, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"通过 uid 查询用户异常: {uid}, 错误: {e}")
+            return {}
 
     # ================================================================
     # CouchDB CRUD 操作

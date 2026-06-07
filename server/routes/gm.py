@@ -572,3 +572,111 @@ def get_layout():
                 'code': 'internal_error'
             }
         }), 500
+
+
+@gm_bp.route('/gm/tutorial', methods=['POST'])
+def gm_tutorial():
+    """
+    GM 引导教程接口
+
+    为新玩家提供初始引导，调用 GameMaster 生成引导剧情。
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)"
+    }
+
+    响应格式:
+    {
+        "dialog": "引导对话文本",
+        "actions": [],
+        "player_update": {},
+        "ui_config": {"left_open":[],"right_open":[]}
+    }
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        gm = get_gm()
+        storage = _get_storage()
+
+        # 固定的引导 prompt
+        tutorial_prompt = "新修士初入青墟古域，请作为引路仙灵，为这位新修士介绍青墟古域的世界观、基本生存法则、修炼入门之道，并描述其初始场景。"
+
+        # 调用 GM 处理引导请求
+        info_log(f"处理引导教程请求 - uid={uid}")
+        result = gm.handle_chat(uid, tutorial_prompt, "青墟古域·云溪村", [])
+
+        # 返回标准 GM 响应格式
+        response_data = {
+            'dialog': result.get('dialog', ''),
+            'actions': result.get('actions', []),
+            'player_update': result.get('player_update', {}),
+            'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
+        }
+
+        # 将玩家数据的 is_new 标记更新为 False
+        try:
+            player_data = storage.couch_get_player(uid)
+            if player_data and player_data.get("is_new") is True:
+                player_data["is_new"] = False
+                storage.couch_save_player(uid, player_data)
+                info_log(f"引导教程完成，已更新玩家 is_new 标记: uid={uid}")
+        except Exception as e:
+            error_log(f"更新玩家 is_new 标记失败: uid={uid}, 错误: {e}")
+
+        # 保存引导消息到聊天历史
+        try:
+            now_ms = int(time_module.time() * 1000)
+            # 保存用户引导请求
+            storage.save_chat_message(
+                uid=uid,
+                sender="player",
+                content=tutorial_prompt,
+                timestamp=now_ms,
+            )
+            # 保存 GM 引导回复
+            storage.save_chat_message(
+                uid=uid,
+                sender="npc",
+                content=response_data.get('dialog', ''),
+                timestamp=now_ms + 1,
+                actions=response_data.get('actions'),
+                player_update=response_data.get('player_update'),
+                ui_config=response_data.get('ui_config'),
+            )
+        except Exception as e:
+            error_log(f"保存引导教程聊天消息失败: {e}")
+
+        debug_log(f"引导教程响应: {json.dumps(response_data, ensure_ascii=False)}")
+        return jsonify(response_data)
+
+    except Exception as e:
+        error_log(f"处理引导教程请求时出错: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500

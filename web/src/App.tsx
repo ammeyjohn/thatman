@@ -5,6 +5,7 @@ import { ChatArea } from './components/ChatArea';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useChatStore } from './stores/chatStore';
 import { useGameStore } from './stores/gameStore';
+import { config } from './config';
 
 const LEFT_COLLAPSED_KEY = 'thatman:leftCollapsed';
 const RIGHT_COLLAPSED_KEY = 'thatman:rightCollapsed';
@@ -32,9 +33,52 @@ function App() {
       const { loadUserInfo } = useGameStore.getState();
       const { loadChatHistory } = useChatStore.getState();
       await Promise.all([loadUserInfo(), loadChatHistory()]);
+
+      // 检查是否需要触发 GM 引导教程（新用户首次登录）
+      await triggerTutorialIfNeeded();
     };
     loadInitialData();
   }, []);
+
+  // 新用户 GM 引导教程
+  const triggerTutorialIfNeeded = async () => {
+    const TUTORIAL_SHOWN_KEY = 'thatman_tutorial_shown';
+    const userStr = localStorage.getItem('thatman_user');
+
+    if (!userStr) return;
+
+    // 检查是否已经展示过教程
+    try {
+      const user = JSON.parse(userStr);
+      const tutorialKey = `${TUTORIAL_SHOWN_KEY}_${user.uid}`;
+      if (localStorage.getItem(tutorialKey)) return;
+
+      // 调用引导教程接口
+      const response = await fetch(`${config.API_BASE_URL}/gm/tutorial`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: user.uid }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.dialog) {
+          // 以系统消息形式展示引导内容
+          const { addMessage } = useChatStore.getState();
+          addMessage({
+            sender: 'system',
+            senderName: '引路仙灵',
+            content: data.dialog,
+            type: 'system',
+          });
+        }
+        // 标记教程已展示
+        localStorage.setItem(tutorialKey, 'true');
+      }
+    } catch (error) {
+      console.error('引导教程加载失败:', error);
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem(LEFT_COLLAPSED_KEY, String(leftCollapsed));
@@ -74,7 +118,7 @@ function App() {
       </div>
 
       {/* Center Panel - Chat Area */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col h-full">
         <ChatArea />
       </div>
 

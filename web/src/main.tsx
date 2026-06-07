@@ -1,10 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App';
+import { RouterProvider } from 'react-router-dom';
+import { router } from './router';
+import { useAuthStore } from './stores/authStore';
 import './index.css';
+
+// 初始化认证状态
+useAuthStore.getState().initAuth();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <RouterProvider router={router} />
   </StrictMode>
 );

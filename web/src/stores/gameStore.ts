@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { CharacterState, WorldState } from '../types';
 import { config } from '../config';
-import { getOrCreateUserId } from '../lib/user';
+import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
 interface GameState {
   character: CharacterState;
@@ -92,7 +92,9 @@ export const useGameStore = create<GameState>((set) => ({
     if (!uid) return;
 
     try {
-      const response = await fetch(`${config.API_BASE_URL}/gm/layout?uid=${encodeURIComponent(uid)}&panel_type=${panelType}`);
+      const response = await fetch(`${config.API_BASE_URL}/gm/layout?uid=${encodeURIComponent(uid)}&panel_type=${panelType}`, {
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) {
         console.error('获取布局失败:', response.status);
         return;
@@ -127,7 +129,7 @@ export const useGameStore = create<GameState>((set) => ({
 
       const response = await fetch(`${config.API_BASE_URL}/gm/generate-layout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           uid,
           panel_type: panelType,
@@ -162,12 +164,14 @@ export const useGameStore = create<GameState>((set) => ({
       // 先初始化用户（如果不存在则创建）
       await fetch(`${config.API_BASE_URL}/user/init`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ uid }),
       });
 
       // 获取用户信息
-      const response = await fetch(`${config.API_BASE_URL}/user/info?uid=${encodeURIComponent(uid)}`);
+      const response = await fetch(`${config.API_BASE_URL}/user/info?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) {
         console.error('获取用户信息失败:', response.status);
         return;
