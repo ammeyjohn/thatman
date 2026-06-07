@@ -553,7 +553,7 @@ def get_layout():
             # 布局不存在，返回默认空布局
             return jsonify({
                 'panel_type': panel_type,
-                'layout': {'sections': []},
+                'layout': '',
                 'version': '',
             })
 

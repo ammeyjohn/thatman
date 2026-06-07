@@ -1,7 +1,7 @@
+import React from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { StatusBar } from './StatusBar';
 import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, Package } from 'lucide-react';
-import type { LayoutSection, LayoutItem, CharacterState } from '../types';
 
 const equipmentIcons: Record<string, React.ReactNode> = {
   sword: <Sword className="w-4 h-4" />,
@@ -9,142 +9,15 @@ const equipmentIcons: Record<string, React.ReactNode> = {
   circle: <Circle className="w-4 h-4" />,
 };
 
-/**
- * 从 character 当前数据中根据 key 路径获取实时值
- * 支持嵌套路径如 "health"、"inventory"
- */
-function getLiveValue(character: CharacterState, key: string): unknown {
-  // key 到 character 字段的映射
-  const keyMap: Record<string, keyof CharacterState> = {
-    name: 'name',
-    realm: 'realm',
-    realm_stage: 'realmStage',
-    realmStage: 'realmStage',
-    level: 'level',
-    health: 'health',
-    max_health: 'maxHealth',
-    maxHealth: 'maxHealth',
-    mana: 'mana',
-    max_mana: 'maxMana',
-    maxMana: 'maxMana',
-    spirit: 'spirit',
-    max_spirit: 'maxSpirit',
-    maxSpirit: 'maxSpirit',
-    spirit_root: 'spiritRoot',
-    spiritRoot: 'spiritRoot',
-    current_location: 'currentLocation',
-    currentLocation: 'currentLocation',
-    current_status: 'currentStatus',
-    currentStatus: 'currentStatus',
-    birth_date: 'birthDate',
-    birthDate: 'birthDate',
-    lifespan: 'lifespan',
-    clothing: 'clothing',
-    inventory: 'inventory',
-    equipment: 'equipment',
-  };
-  const field = keyMap[key];
-  if (field && character[field] !== undefined && character[field] !== null && character[field] !== '') {
-    return character[field];
-  }
-  return undefined;
-}
-
-/**
- * 渲染布局项，优先使用 character 当前数据中的实时值
- */
-function renderLayoutItem(item: LayoutItem, liveValue?: unknown) {
-  // 优先使用实时值，回退到布局中的快照值
-  const value = liveValue !== undefined ? liveValue : item.value;
-
-  switch (item.display_type) {
-    case 'bar': {
-      const numValue = typeof value === 'number' ? value : parseFloat(String(value)) || 0;
-      const maxValue = item.max_value || 100;
-      const percentage = Math.min(100, Math.max(0, (numValue / maxValue) * 100));
-      return (
-        <div key={item.key} className="mb-2">
-          <div className="flex justify-between items-center mb-1">
-            <span className="text-[#7f8c8d] text-xs">{item.label}</span>
-            <span className="text-xs" style={{ color: item.color || '#e8e4dc' }}>
-              {numValue}/{maxValue}
-            </span>
-          </div>
-          <div className="w-full h-1.5 bg-[#1a2f2f] rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${percentage}%`,
-                backgroundColor: item.color || '#4ECDC4',
-              }}
-            />
-          </div>
-        </div>
-      );
-    }
-    case 'badge':
-      return (
-        <span
-          key={item.key}
-          className="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1"
-          style={{
-            backgroundColor: `${item.color || '#c9a227'}20`,
-            color: item.color || '#c9a227',
-            border: `1px solid ${item.color || '#c9a227'}50`,
-          }}
-        >
-          {item.label}: {String(value)}
-        </span>
-      );
-    case 'list': {
-      const listItems = Array.isArray(value) ? value : [value];
-      return (
-        <div key={item.key} className="mb-1">
-          <span className="text-[#7f8c8d] text-xs">{item.label}</span>
-          <div className="pl-2 space-y-0.5">
-            {listItems.map((li: string | number, idx: number) => (
-              <div key={idx} className="text-sm" style={{ color: item.color || '#e8e4dc', fontFamily: 'Noto Serif SC, serif' }}>
-                {typeof li === 'object' ? JSON.stringify(li) : li}
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-    case 'text':
-    default:
-      return (
-        <div key={item.key} className="flex justify-between items-center">
-          <span className="text-[#7f8c8d] text-xs">{item.label}</span>
-          <span className="text-sm" style={{ color: item.color || '#e8e4dc', fontFamily: 'Noto Serif SC, serif' }}>
-            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-          </span>
-        </div>
-      );
-  }
-}
-
-function renderLayoutSection(section: LayoutSection, character: CharacterState) {
-  return (
-    <div key={section.id} className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-base">{section.icon}</span>
-        <span className="text-xs font-medium" style={{ color: section.title_color || '#c9a227' }}>
-          {section.title}
-        </span>
-      </div>
-      <div className="pl-6 space-y-1">
-        {section.items.map((item) => {
-          const liveValue = getLiveValue(character, item.key);
-          return renderLayoutItem(item, liveValue);
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function CharacterPanel() {
   const { character, characterLayout } = useGameStore();
+
+  // 注入实时数据到 window.__LAYOUT_DATA__，供 HTML 布局中的 JS 读取
+  React.useEffect(() => {
+    if (characterLayout) {
+      (window as any).__LAYOUT_DATA__ = character;
+    }
+  }, [character, characterLayout]);
 
   return (
     <div className="w-[280px] bg-[#0d1f1f] border-r border-[#2d5a5a]/30 flex flex-col">
@@ -160,7 +33,7 @@ export function CharacterPanel() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {characterLayout ? (
-          // 动态布局渲染
+          // 动态 HTML 布局渲染
           <>
             {/* Avatar & Name - 始终显示 */}
             <div className="text-center mb-6">
@@ -176,8 +49,8 @@ export function CharacterPanel() {
                 {character.name || '未命名'}
               </h3>
             </div>
-            {/* 动态布局区块 */}
-            {characterLayout.sections.map((section) => renderLayoutSection(section, character))}
+            {/* 注入实时数据并渲染 HTML 布局 */}
+            <div dangerouslySetInnerHTML={{ __html: characterLayout }} />
           </>
         ) : (
           // 原有硬编码渲染（保持不变）

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, PanelLayout } from '../types';
+import type { CharacterState, WorldState } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId } from '../lib/user';
 
@@ -8,10 +8,10 @@ interface GameState {
   world: WorldState;
   updateCharacter: (updates: Partial<CharacterState>) => void;
   updateWorld: (updates: Partial<WorldState>) => void;
-  characterLayout: PanelLayout | null;
-  worldLayout: PanelLayout | null;
-  setCharacterLayout: (layout: PanelLayout | null) => void;
-  setWorldLayout: (layout: PanelLayout | null) => void;
+  characterLayout: string | null;
+  worldLayout: string | null;
+  setCharacterLayout: (layout: string | null) => void;
+  setWorldLayout: (layout: string | null) => void;
   loadLayout: (panelType: 'character' | 'world') => Promise<void>;
   generateLayout: (panelType: 'character' | 'world') => Promise<void>;
   loadUserInfo: () => Promise<void>;
@@ -99,7 +99,7 @@ export const useGameStore = create<GameState>((set) => ({
       }
 
       const data = await response.json();
-      if (data.layout && data.layout.sections && data.layout.sections.length > 0) {
+      if (data.layout && typeof data.layout === 'string' && data.layout.trim()) {
         if (panelType === 'character') {
           set({ characterLayout: data.layout });
         } else {

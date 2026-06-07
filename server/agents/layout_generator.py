@@ -65,7 +65,7 @@ class LayoutGenerator:
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                model_kwargs={"response_format": {"type": "json_object"}},
+                # 不设置 response_format，让 LLM 自由输出 HTML
             )
             info_log(f"布局生成模型初始化成功 - 模型: {model_name}, API: {api_base}")
         except Exception as e:
@@ -82,10 +82,10 @@ class LayoutGenerator:
                 debug_log(f"加载布局 system prompt: {prompt_path}")
             except Exception as e:
                 error_log(f"加载布局 system prompt 失败: {e}")
-                self.system_prompt = "你是面板布局生成器，根据数据生成面板布局JSON。"
+                self.system_prompt = "你是面板布局生成器，根据数据生成面板HTML代码。"
         else:
             warn_log(f"布局 system prompt 文件不存在: {prompt_path}")
-            self.system_prompt = "你是面板布局生成器，根据数据生成面板布局JSON。"
+            self.system_prompt = "你是面板布局生成器，根据数据生成面板HTML代码。"
 
     def generate_layout(
         self,
@@ -96,7 +96,7 @@ class LayoutGenerator:
         """
         生成面板布局
 
-        流程：读取旧布局 -> 构建提示 -> 调用 LLM -> 解析 JSON -> 保存 -> 返回
+        流程：读取旧布局 -> 构建提示 -> 调用 LLM -> 提取 HTML -> 保存 -> 返回
 
         Args:
             uid: 玩家唯一标识
@@ -122,7 +122,8 @@ class LayoutGenerator:
                     old_layout.pop("panel_type", None)
                     old_layout.pop("created_at", None)
                     old_layout.pop("updated_at", None)
-                    debug_log(f"[generate_layout] 读取旧布局成功: sections数={len(old_layout.get('layout', {}).get('sections', []))}")
+                    old_layout_html = old_layout.get('layout', '')
+                    debug_log(f"[generate_layout] 读取旧布局成功: HTML长度={len(old_layout_html) if isinstance(old_layout_html, str) else 'not_str'}")
                 else:
                     debug_log("[generate_layout] 无旧布局")
 
@@ -133,7 +134,7 @@ class LayoutGenerator:
             # 3. 调用 LLM
             if not self.layout_model:
                 error_log("布局生成模型未初始化")
-                return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+                return {"panel_type": panel_type, "layout": "", "version": ""}
 
             langchain_messages = []
             for msg in messages:
@@ -149,18 +150,18 @@ class LayoutGenerator:
             content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
             debug_log(f"[generate_layout] LLM 响应完成: content长度={len(content)}")
 
-            # 4. 解析 JSON
-            layout = self._parse_layout_response(content)
-            if not layout or not layout.get("sections"):
-                warn_log("布局生成结果为空或无 sections")
-                return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+            # 4. 提取 HTML
+            layout_html = self._extract_html(content)
+            if not layout_html:
+                warn_log("布局生成结果为空或无有效 HTML")
+                return {"panel_type": panel_type, "layout": "", "version": ""}
 
-            debug_log(f"[generate_layout] 解析布局成功: sections数={len(layout.get('sections', []))}")
+            debug_log(f"[generate_layout] HTML 提取成功: 长度={len(layout_html)}")
 
             # 5. 保存到 CouchDB
             version = uuid.uuid4().hex[:8]
             layout_doc = {
-                "layout": layout,
+                "layout": layout_html,
                 "version": version,
             }
 
@@ -171,13 +172,13 @@ class LayoutGenerator:
             # 6. 返回结果
             return {
                 "panel_type": panel_type,
-                "layout": layout,
+                "layout": layout_html,
                 "version": version,
             }
 
         except Exception as e:
             error_log(f"生成布局异常: uid={uid}, panel_type={panel_type}, 错误: {e}")
-            return {"panel_type": panel_type, "layout": {"sections": []}, "version": ""}
+            return {"panel_type": panel_type, "layout": "", "version": ""}
 
     def _build_layout_prompt(
         self,
@@ -219,11 +220,12 @@ class LayoutGenerator:
 
         # 旧布局参考
         if old_layout and old_layout.get("layout"):
-            old_layout_str = json.dumps(old_layout["layout"], ensure_ascii=False, indent=2)
-            user_parts.append(f"\n旧布局参考（保留仍有效的结构，仅调整变化部分）：\n{old_layout_str}")
+            old_layout_html = old_layout["layout"]
+            if isinstance(old_layout_html, str) and old_layout_html.strip():
+                user_parts.append(f"\n旧布局 HTML 参考（保留仍有效的结构，仅调整变化部分）：\n{old_layout_html}")
 
         # 生成指令
-        user_parts.append("\n请根据以上信息生成新的面板布局JSON。注意：当前数据中不存在的字段不要在布局中显示。")
+        user_parts.append("\n请根据以上信息生成新的面板 HTML 代码。注意：当前数据中不存在的字段不要在布局中显示，所有动态值通过 JS 从 window.__LAYOUT_DATA__ 读取。")
 
         messages.append({"role": "user", "content": "\n".join(user_parts)})
 
@@ -231,44 +233,49 @@ class LayoutGenerator:
 
         return messages
 
-    def _parse_layout_response(self, content: str) -> Dict[str, Any]:
+    def _extract_html(self, content: str) -> str:
         """
-        解析 LLM 返回的布局 JSON
+        从 LLM 返回内容中提取 HTML 代码
+
+        支持以下格式：
+        1. 纯 HTML 代码
+        2. markdown 代码块包裹的 HTML（```html ... ```）
 
         Args:
             content: LLM 返回的文本内容
 
         Returns:
-            解析后的布局字典，失败返回空字典
+            提取出的 HTML 代码字符串，失败返回空字符串
         """
         if not content or not content.strip():
             warn_log("LLM 返回内容为空")
-            return {}
+            return ""
 
-        # 尝试提取 markdown 代码块中的 JSON
         text = content.strip()
-        if "```json" in text:
-            start = text.find("```json") + len("```json")
+
+        # 尝试提取 markdown 代码块中的 HTML
+        if "```html" in text:
+            start = text.find("```html") + len("```html")
             end = text.find("```", start)
             if end > start:
                 text = text[start:end].strip()
         elif "```" in text:
             start = text.find("```") + len("```")
+            # 跳过可能的语言标识行（如 html、htm 等）
+            first_newline = text.find("\n", start)
+            if first_newline > start and first_newline - start < 20:
+                start = first_newline + 1
             end = text.find("```", start)
             if end > start:
                 text = text[start:end].strip()
 
-        try:
-            result = json.loads(text)
-            if isinstance(result, dict) and "sections" in result:
-                debug_log("布局 JSON 解析成功")
-                return result
-            else:
-                warn_log(f"布局 JSON 格式不符合预期: {list(result.keys()) if isinstance(result, dict) else type(result)}")
-                return {}
-        except json.JSONDecodeError as e:
-            warn_log(f"布局 JSON 解析失败: {e}, 原始内容: {content[:200]}")
-            return {}
+        # 验证是否包含 HTML 标签
+        if "<" in text and ">" in text:
+            debug_log("HTML 代码提取成功")
+            return text
+        else:
+            warn_log(f"LLM 返回内容不包含有效 HTML: {content[:200]}")
+            return ""
 
 
 # ================================================================

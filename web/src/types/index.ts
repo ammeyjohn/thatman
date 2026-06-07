@@ -93,33 +93,3 @@ export interface StreamParseState {
   panel: string;
 }
 
-// 布局项类型
-export interface LayoutItem {
-  key: string;
-  label: string;
-  value: string | number;
-  display_type: 'text' | 'badge' | 'bar' | 'list';
-  color: string;
-  max_value?: number;
-}
-
-// 布局区块类型
-export interface LayoutSection {
-  id: string;
-  title: string;
-  icon: string;
-  title_color: string;
-  items: LayoutItem[];
-}
-
-// 面板布局类型
-export interface PanelLayout {
-  sections: LayoutSection[];
-}
-
-// 布局响应类型
-export interface LayoutResponse {
-  panel_type: 'character' | 'world';
-  layout: PanelLayout;
-  version: string;
-}
