@@ -1,0 +1,13 @@
+llama-server -m "$MODELSCOPE/unsloth/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-UD-Q4_K_XL.gguf" \
+  --port 7777 \
+  --host 0.0.0.0 \
+  -ngl 99 \
+  -c 65536 \
+  -b 2048 \
+  -ub 1024 \
+  --flash-attn on \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --reasoning off \
+  -t 10 \
+  --parallel 1
