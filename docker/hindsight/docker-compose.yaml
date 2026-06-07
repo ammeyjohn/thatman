@@ -15,13 +15,22 @@ services:
       HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
       # HINDSIGHT_API_LLM_BASE_URL: http://128.1.1.48:7778/v1
       HINDSIGHT_API_LLM_API_KEY: dummy
+
+      # 外部 Embedding 接口
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: http://host.docker.internal:8888/v1
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: dummy
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: bge-m3
+
+      # 外部 Reranker 接口
+      HINDSIGHT_API_RERANK_PROVIDER: openai
+      HINDSIGHT_API_RERANK_OPENAI_BASE_URL: http://host.docker.internal:8888/v1
+      HINDSIGHT_API_RERANK_OPENAI_API_KEY: dummy
+      HINDSIGHT_API_RERANK_OPENAI_MODEL: bge-reranker-v2-m3
+
       HF_ENDPOINT: https://hf-mirror.com
       HF_HOME: /home/hindsight/.cache/huggingface
       HINDSIGHT_HF_CACHE: /home/hindsight/.cache/huggingface
-      HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
-      HINDSIGHT_API_EMBEDDINGS_MODEL_NAME: Qwen/Qwen3-Embedding-0.6B
-      HINDSIGHT_API_RERANK_PROVIDER: local
-      HINDSIGHT_API_RERANK_MODEL_NAME: Qwen/Qwen3-Rerank-0.6B
     volumes:
       - ./data:/home/hindsight/.pg0
       - ./hf_cache:/home/hindsight/.cache/huggingface
