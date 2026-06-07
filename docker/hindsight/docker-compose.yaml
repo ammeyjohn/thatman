@@ -5,7 +5,7 @@ services:
     pull_policy: always
     restart: unless-stopped
     ports:
-      - "8888:8888"
+      - "9998:8888"
       - "9999:9999"
     extra_hosts:
       - "host.docker.internal:host-gateway"
