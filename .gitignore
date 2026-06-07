@@ -36,6 +36,8 @@ build/
 __pycache__/
 *.pyc
 
+.trae/
+
 story/
 data/
 hf_cache/
