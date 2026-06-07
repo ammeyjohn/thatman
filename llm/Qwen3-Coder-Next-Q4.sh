@@ -2,7 +2,7 @@ llama-server -m "$MODELSCOPE/unsloth/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-UD-Q
   --port 7777 \
   --host 0.0.0.0 \
   -ngl 99 \
-  -c 65536 \
+  -c 16384 \
   -b 2048 \
   -ub 1024 \
   --flash-attn on \

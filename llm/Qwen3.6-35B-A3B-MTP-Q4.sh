@@ -2,7 +2,7 @@ llama-server -m "$MODELSCOPE/unsloth/Qwen3___6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-
   --port 7778 \
   --host 0.0.0.0 \
   -ngl 99 \
-  -c 65536 \
+  -c 32768 \
   -b 2048 \
   -ub 1024 \
   --flash-attn on \

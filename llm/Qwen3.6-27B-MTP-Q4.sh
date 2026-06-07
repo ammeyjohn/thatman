@@ -3,7 +3,7 @@ llama-server \
   --port 7779 \
   --host 0.0.0.0 \
   -ngl 99 \
-  -c 65536 \
+  -c 8192 \
   -b 2048 \
   -ub 1024 \
   --flash-attn on \
