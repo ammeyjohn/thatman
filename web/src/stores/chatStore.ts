@@ -27,6 +27,9 @@ interface ChatState {
   abortController: AbortController | null;
   lastLocation: string | null;
   lastTime: string | null;
+  hasMoreHistory: boolean;
+  isLoadingHistory: boolean;
+  earliestTimestamp: number | null;
   addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
   updateLastMessage: (content: string) => void;
   updateLastMessageOptions: (options: string[]) => void;
@@ -43,6 +46,7 @@ interface ChatState {
   editMessage: (messageId: string, newContent: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
   loadChatHistory: () => Promise<void>;
+  loadMoreHistory: () => Promise<void>;
   clearHistory: () => Promise<void>;
 }
 
@@ -233,14 +237,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   abortController: null,
   lastLocation: null,
   lastTime: null,
+  hasMoreHistory: true,
+  isLoadingHistory: false,
+  earliestTimestamp: null,
 
   addMessage: (message) => {
     const id = generateId();
+    // 自动附加当前游戏时间和地点
+    const gameState = useGameStore.getState();
+    const enrichedMessage = {
+      ...message,
+      gameDate: gameState.world.gameDate || undefined,
+      gameShichen: gameState.world.time ? `${gameState.world.time}${gameState.world.timePeriod ? `·${gameState.world.timePeriod}` : ''}` : undefined,
+      location: gameState.world.location || undefined,
+    };
     set((state) => ({
       messages: [
         ...state.messages,
         {
-          ...message,
+          ...enrichedMessage,
           id,
           timestamp: Date.now(),
         },
@@ -480,19 +495,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const uid = getOrCreateUserId();
     if (!uid) return;
 
+    set({ isLoadingHistory: true });
+
     try {
-      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=100`, {
+      const response = await fetch(`${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=10`, {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {
         console.error('加载聊天历史失败:', response.status);
+        set({ isLoadingHistory: false });
         return;
       }
 
       const data = await response.json();
       const docs = data.messages || [];
 
-      if (docs.length === 0) return;
+      if (docs.length === 0) {
+        set({ hasMoreHistory: false, isLoadingHistory: false, earliestTimestamp: null });
+        return;
+      }
 
       // 将数据库记录转换为 ChatMessage 格式
       const messages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
@@ -508,10 +529,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } : undefined,
       }));
 
-      set({ messages });
+      // 记录最早的时间戳（用于下次分页加载）
+      const earliestTimestamp = docs.length > 0 ? (docs[0].timestamp as number) : null;
+
+      set({
+        messages,
+        hasMoreHistory: docs.length === 10,
+        isLoadingHistory: false,
+        earliestTimestamp,
+      });
       console.log(`[ChatHistory] 加载了 ${messages.length} 条历史消息`);
     } catch (error) {
       console.error('加载聊天历史失败:', error);
+      set({ isLoadingHistory: false });
+    }
+  },
+
+  loadMoreHistory: async () => {
+    const { earliestTimestamp, hasMoreHistory, isLoadingHistory } = get();
+    if (!hasMoreHistory || isLoadingHistory || !earliestTimestamp) return;
+
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    set({ isLoadingHistory: true });
+
+    try {
+      const response = await fetch(
+        `${config.API_BASE_URL}/chat/history?uid=${encodeURIComponent(uid)}&limit=10&before_timestamp=${earliestTimestamp}`,
+        { headers: getAuthHeaders() }
+      );
+      if (!response.ok) {
+        console.error('加载更多聊天历史失败:', response.status);
+        set({ isLoadingHistory: false });
+        return;
+      }
+
+      const data = await response.json();
+      const docs = data.messages || [];
+
+      if (docs.length === 0) {
+        set({ hasMoreHistory: false, isLoadingHistory: false });
+        return;
+      }
+
+      // 将数据库记录转换为 ChatMessage 格式
+      const newMessages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
+        id: (doc._id as string) || generateId(),
+        sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
+        content: (doc.content as string) || '',
+        timestamp: (doc.timestamp as number) || Date.now(),
+        type: 'normal' as const,
+        actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
+        parsedJSON: doc.player_update || doc.ui_config ? {
+          player_update: doc.player_update,
+          ui_config: doc.ui_config,
+        } : undefined,
+      }));
+
+      const newEarliestTimestamp = docs.length > 0 ? (docs[0].timestamp as number) : earliestTimestamp;
+
+      set((state) => ({
+        messages: [...newMessages, ...state.messages],
+        hasMoreHistory: docs.length === 10,
+        isLoadingHistory: false,
+        earliestTimestamp: newEarliestTimestamp,
+      }));
+      console.log(`[ChatHistory] 加载了更多 ${newMessages.length} 条历史消息`);
+    } catch (error) {
+      console.error('加载更多聊天历史失败:', error);
+      set({ isLoadingHistory: false });
     }
   },
 
@@ -525,7 +612,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         headers: getAuthHeaders(),
       });
       if (response.ok) {
-        set({ messages: [] });
+        set({ messages: [], hasMoreHistory: true, earliestTimestamp: null });
         console.log('[ChatHistory] 聊天历史已清除');
       } else {
         console.error('清除聊天历史失败:', response.status);

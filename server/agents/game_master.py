@@ -292,10 +292,12 @@ class GameMaster:
             })
             debug_log("[build_messages] Step2.2 追加引导教程场景提示")
 
-        # 追加角色编号、当前区域、历史记忆
+        # 追加角色编号、当前区域、游戏时间、历史记忆
+        game_time_info = self._get_game_time_info()
         memory_section = (
             f"【角色编号】{uid}\n"
             f"【当前区域】{current_area}\n"
+            f"【游戏时间】{game_time_info}\n"
             f"【角色&世界历史记忆】：{memory_text}"
         )
         messages.append({
@@ -586,6 +588,23 @@ class GameMaster:
     # ================================================================
     # 辅助方法
     # ================================================================
+
+    def _get_game_time_info(self) -> str:
+        """
+        获取当前游戏时间信息字符串
+
+        Returns:
+            格式化的游戏时间字符串，如"天元三千六百年·正月初一 卯时·清晨"
+        """
+        try:
+            from world_time_service import get_world_time_service_instance
+            wts = get_world_time_service_instance()
+            if wts:
+                time_info = wts.get_current_time()
+                return f"{time_info.get('game_date', '未知')} {time_info.get('shichen_name', '')}·{time_info.get('shichen_period', '')}"
+        except Exception as e:
+            error_log(f"获取游戏时间信息失败: {e}")
+        return "未知"
 
     # 角色档案格式化时的已知字段列表（按展示顺序排列）
     _KNOWN_PROFILE_FIELDS = [

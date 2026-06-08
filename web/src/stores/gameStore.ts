@@ -19,6 +19,10 @@ interface GameState {
   generateLayout: (panelType: 'character' | 'world') => Promise<void>;
   regenerateLayout: (panelType: 'character' | 'world') => Promise<void>;
   loadUserInfo: () => Promise<void>;
+  worldTimeSSE: EventSource | null;
+  connectWorldTimeSSE: () => void;
+  disconnectWorldTimeSSE: () => void;
+  fetchWorldTime: () => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -73,6 +77,9 @@ const initialWorld: WorldState = {
       type: 'normal',
     },
   ],
+  gameDate: '',
+  gameHour: 0,
+  shichenIndex: 0,
 };
 
 export const useGameStore = create<GameState>((set) => ({
@@ -83,6 +90,7 @@ export const useGameStore = create<GameState>((set) => ({
   isGeneratingCharacterLayout: false,
   isGeneratingWorldLayout: false,
   _layoutGenerationQueue: { character: false, world: false },
+  worldTimeSSE: null,
   updateCharacter: (updates) =>
     set((state) => ({
       character: { ...state.character, ...updates },
@@ -281,6 +289,11 @@ export const useGameStore = create<GameState>((set) => ({
 
       console.log('[UserInfo] 用户信息加载成功');
 
+      // 加载世界时间
+      const { fetchWorldTime, connectWorldTimeSSE } = useGameStore.getState();
+      fetchWorldTime();
+      connectWorldTimeSSE();
+
       // 加载布局
       const { loadLayout } = useGameStore.getState();
       loadLayout('character');
@@ -300,6 +313,98 @@ export const useGameStore = create<GameState>((set) => ({
       }, 3000);
     } catch (error) {
       console.error('加载用户信息失败:', error);
+    }
+  },
+
+  fetchWorldTime: async () => {
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/world-time`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      set((state) => ({
+        world: {
+          ...state.world,
+          time: data.shichen_name || state.world.time,
+          timePeriod: data.shichen_period || state.world.timePeriod,
+          gameDate: data.game_date || '',
+          gameHour: data.game_hour ?? 0,
+          shichenIndex: data.shichen_index ?? 0,
+        },
+      }));
+    } catch (error) {
+      console.error('获取世界时间失败:', error);
+    }
+  },
+
+  connectWorldTimeSSE: () => {
+    // 先断开已有连接
+    const { disconnectWorldTimeSSE } = useGameStore.getState();
+    disconnectWorldTimeSSE();
+
+    try {
+      const eventSource = new EventSource(`${config.API_BASE_URL}/gm/world-time/sse`);
+
+      eventSource.addEventListener('current_time', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          set((state) => ({
+            world: {
+              ...state.world,
+              time: data.shichen_name || state.world.time,
+              timePeriod: data.shichen_period || state.world.timePeriod,
+              gameDate: data.game_date || '',
+              gameHour: data.game_hour ?? 0,
+              shichenIndex: data.shichen_index ?? 0,
+            },
+          }));
+        } catch (e) {
+          console.error('解析世界时间SSE数据失败:', e);
+        }
+      });
+
+      eventSource.addEventListener('shichen_change', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          set((state) => ({
+            world: {
+              ...state.world,
+              time: data.shichen_name || state.world.time,
+              timePeriod: data.shichen_period || state.world.timePeriod,
+              gameDate: data.game_date || '',
+              gameHour: data.game_hour ?? 0,
+              shichenIndex: data.shichen_index ?? 0,
+            },
+          }));
+          console.log(`[WorldTime] 时辰变化: ${data.game_date} ${data.shichen_name}·${data.shichen_period}`);
+        } catch (e) {
+          console.error('解析时辰变化SSE数据失败:', e);
+        }
+      });
+
+      eventSource.onerror = () => {
+        console.error('世界时间SSE连接错误，5秒后重连');
+        eventSource.close();
+        set({ worldTimeSSE: null });
+        setTimeout(() => {
+          useGameStore.getState().connectWorldTimeSSE();
+        }, 5000);
+      };
+
+      set({ worldTimeSSE: eventSource });
+      console.log('[WorldTime] SSE 连接已建立');
+    } catch (error) {
+      console.error('建立世界时间SSE连接失败:', error);
+    }
+  },
+
+  disconnectWorldTimeSSE: () => {
+    const { worldTimeSSE } = useGameStore.getState();
+    if (worldTimeSSE) {
+      worldTimeSSE.close();
+      set({ worldTimeSSE: null });
+      console.log('[WorldTime] SSE 连接已断开');
     }
   },
 

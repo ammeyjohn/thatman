@@ -13,6 +13,7 @@ if str(agents_path) not in sys.path:
 from game_master import GameMaster
 from gm_logger import debug_log, info_log, error_log
 from layout_generator import LayoutGenerator, get_layout_generator
+from world_time_service import WorldTimeService, set_world_time_service
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ gm_bp = Blueprint('gm', __name__)
 
 # 初始化 GameMaster 实例
 _gm_instance = None
+
+# 初始化 WorldTimeService 实例
+_world_time_service = None
 
 
 def get_gm():
@@ -36,10 +40,56 @@ def get_gm():
     return _gm_instance
 
 
+def get_world_time_service():
+    """获取或初始化 WorldTimeService 实例（单例）"""
+    global _world_time_service
+    if _world_time_service is None:
+        try:
+            gm = get_gm()
+            if gm.storage:
+                _world_time_service = WorldTimeService(gm.storage)
+                _world_time_service.start()
+                set_world_time_service(_world_time_service)
+                info_log("WorldTimeService 初始化并启动成功")
+            else:
+                error_log("WorldTimeService 初始化失败: GMStorage 不可用")
+        except Exception as e:
+            error_log(f"WorldTimeService 初始化失败: {e}")
+    return _world_time_service
+
+
 def _get_storage():
     """获取 GMStorage 实例"""
     gm = get_gm()
     return gm.storage
+
+
+def _get_game_time_and_location(current_area: str) -> dict:
+    """
+    获取当前游戏时间和地点信息，用于 save_chat_message
+
+    Args:
+        current_area: 当前区域
+
+    Returns:
+        包含 game_date, game_shichen, location 的字典
+    """
+    game_date = ""
+    game_shichen = ""
+    try:
+        from world_time_service import get_world_time_service_instance
+        wts = get_world_time_service_instance()
+        if wts:
+            time_info = wts.get_current_time()
+            game_date = time_info.get("game_date", "")
+            game_shichen = f"{time_info.get('shichen_name', '')}·{time_info.get('shichen_period', '')}"
+    except Exception:
+        pass
+    return {
+        "game_date": game_date,
+        "game_shichen": game_shichen,
+        "location": current_area,
+    }
 
 
 @gm_bp.route('/gm/chat', methods=['POST'])
@@ -111,11 +161,15 @@ def gm_chat():
     try:
         storage = _get_storage()
         now_ms = int(time_module.time() * 1000)
+        time_loc = _get_game_time_and_location(current_area)
         storage.save_chat_message(
             uid=uid,
             sender="player",
             content=user_input,
             timestamp=now_ms,
+            game_date=time_loc["game_date"],
+            game_shichen=time_loc["game_shichen"],
+            location=time_loc["location"],
         )
     except Exception as e:
         error_log(f"保存用户聊天消息失败: {e}")
@@ -158,6 +212,7 @@ def gm_chat():
                     try:
                         storage = _get_storage()
                         now_ms = int(time_module.time() * 1000)
+                        time_loc = _get_game_time_and_location(current_area)
                         storage.save_chat_message(
                             uid=uid,
                             sender="npc",
@@ -166,6 +221,9 @@ def gm_chat():
                             actions=result_data.get('actions'),
                             player_update=result_data.get('player_update'),
                             ui_config=result_data.get('ui_config'),
+                            game_date=time_loc["game_date"],
+                            game_shichen=time_loc["game_shichen"],
+                            location=time_loc["location"],
                         )
                     except Exception as e:
                         error_log(f"流式保存NPC聊天消息失败: {e}")
@@ -193,6 +251,7 @@ def gm_chat():
         try:
             storage = _get_storage()
             now_ms = int(time_module.time() * 1000)
+            time_loc = _get_game_time_and_location(current_area)
             storage.save_chat_message(
                 uid=uid,
                 sender="npc",
@@ -201,6 +260,9 @@ def gm_chat():
                 actions=response_data.get('actions'),
                 player_update=response_data.get('player_update'),
                 ui_config=response_data.get('ui_config'),
+                game_date=time_loc["game_date"],
+                game_shichen=time_loc["game_shichen"],
+                location=time_loc["location"],
             )
         except Exception as e:
             error_log(f"保存NPC聊天消息失败: {e}")
@@ -222,14 +284,21 @@ def gm_chat():
 @gm_bp.route('/chat/history', methods=['GET'])
 def get_chat_history():
     """
-    获取用户聊天历史
+    获取用户聊天历史（支持分页）
 
     查询参数:
         uid: 玩家唯一ID（必填）
         limit: 返回消息数量上限，默认100
+        before_timestamp: 分页时间戳，获取此时间戳之前的消息
     """
     uid = request.args.get('uid', '')
     limit = int(request.args.get('limit', 100))
+    before_timestamp = request.args.get('before_timestamp')
+    if before_timestamp:
+        try:
+            before_timestamp = int(before_timestamp)
+        except ValueError:
+            before_timestamp = None
 
     if not uid:
         return jsonify({
@@ -242,7 +311,7 @@ def get_chat_history():
 
     try:
         storage = _get_storage()
-        docs = storage.get_chat_history(uid, limit=limit)
+        docs = storage.get_chat_history(uid, limit=limit, before_timestamp=before_timestamp)
         return jsonify({
             'uid': uid,
             'messages': docs,
@@ -734,11 +803,15 @@ def gm_tutorial():
                 # 保存引导消息到聊天历史
                 try:
                     now_ms = int(time_module.time() * 1000)
+                    time_loc = _get_game_time_and_location("青墟古域·云溪村")
                     storage.save_chat_message(
                         uid=uid,
                         sender="player",
                         content=tutorial_prompt,
                         timestamp=now_ms,
+                        game_date=time_loc["game_date"],
+                        game_shichen=time_loc["game_shichen"],
+                        location=time_loc["location"],
                     )
                     storage.save_chat_message(
                         uid=uid,
@@ -748,6 +821,9 @@ def gm_tutorial():
                         actions=result_data.get('actions'),
                         player_update=result_data.get('player_update'),
                         ui_config=result_data.get('ui_config'),
+                        game_date=time_loc["game_date"],
+                        game_shichen=time_loc["game_shichen"],
+                        location=time_loc["location"],
                     )
                 except Exception as e:
                     error_log(f"流式保存引导教程聊天消息失败: {e}")
@@ -784,11 +860,15 @@ def gm_tutorial():
             # 保存引导消息到聊天历史
             try:
                 now_ms = int(time_module.time() * 1000)
+                time_loc = _get_game_time_and_location("青墟古域·云溪村")
                 storage.save_chat_message(
                     uid=uid,
                     sender="player",
                     content=tutorial_prompt,
                     timestamp=now_ms,
+                    game_date=time_loc["game_date"],
+                    game_shichen=time_loc["game_shichen"],
+                    location=time_loc["location"],
                 )
                 storage.save_chat_message(
                     uid=uid,
@@ -798,6 +878,9 @@ def gm_tutorial():
                     actions=response_data.get('actions'),
                     player_update=response_data.get('player_update'),
                     ui_config=response_data.get('ui_config'),
+                    game_date=time_loc["game_date"],
+                    game_shichen=time_loc["game_shichen"],
+                    location=time_loc["location"],
                 )
             except Exception as e:
                 error_log(f"保存引导教程聊天消息失败: {e}")
@@ -807,6 +890,121 @@ def gm_tutorial():
 
     except Exception as e:
         error_log(f"处理引导教程请求时出错: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/world-time', methods=['GET'])
+def get_world_time():
+    """
+    获取当前世界时间
+
+    响应格式:
+    {
+        "game_date": "天元三千六百年·正月初一",
+        "game_year": 3600,
+        "game_month": 1,
+        "game_day": 1,
+        "game_hour": 0,
+        "game_minute": 0,
+        "shichen_name": "子时",
+        "shichen_period": "深夜",
+        "shichen_index": 0,
+        "time_ratio": 10
+    }
+    """
+    try:
+        wts = get_world_time_service()
+        if wts is None:
+            return jsonify({
+                'error': {
+                    'message': '世界时间服务不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        time_info = wts.get_current_time()
+        return jsonify(time_info)
+    except Exception as e:
+        error_log(f"获取世界时间失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/world-time/sse', methods=['GET'])
+def world_time_sse():
+    """
+    世界时间 SSE 订阅接口
+
+    当游戏时辰变化时，推送时间信息事件流。
+    事件格式:
+        event: shichen_change
+        data: {"game_date": "...", "shichen_name": "...", ...}
+    """
+    try:
+        wts = get_world_time_service()
+        if wts is None:
+            return jsonify({
+                'error': {
+                    'message': '世界时间服务不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        def generate():
+            # 使用队列在回调与 SSE 生成器之间传递数据
+            import queue
+            q = queue.Queue()
+
+            def on_shichen_change(time_info):
+                """时辰变化回调，将数据放入队列"""
+                try:
+                    q.put(time_info, timeout=5)
+                except Exception:
+                    pass
+
+            # 订阅时辰变化
+            wts.subscribe(on_shichen_change)
+
+            try:
+                # 先发送当前时间
+                current_time = wts.get_current_time()
+                yield f"event: current_time\ndata: {json.dumps(current_time, ensure_ascii=False)}\n\n"
+
+                # 持续监听时辰变化
+                while True:
+                    try:
+                        time_info = q.get(timeout=30)
+                        yield f"event: shichen_change\ndata: {json.dumps(time_info, ensure_ascii=False)}\n\n"
+                    except queue.Empty:
+                        # 发送心跳，防止连接超时
+                        yield f"event: heartbeat\ndata: {{}}\n\n"
+            except GeneratorExit:
+                # 客户端断开连接
+                pass
+            finally:
+                wts.unsubscribe(on_shichen_change)
+
+        return Response(generate(), mimetype='text/event-stream',
+                      headers={
+                          'Cache-Control': 'no-cache',
+                          'X-Accel-Buffering': 'no',
+                          'Connection': 'keep-alive',
+                      })
+    except Exception as e:
+        error_log(f"世界时间 SSE 订阅失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

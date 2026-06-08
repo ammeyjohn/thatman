@@ -43,6 +43,9 @@ export interface WorldState {
   spiritTideIntensity: number;
   location: string;
   events: WorldEvent[];
+  gameDate: string;
+  gameHour: number;
+  shichenIndex: number;
 }
 
 export interface WorldEvent {
@@ -65,6 +68,9 @@ export interface ChatMessage {
   actions?: string[];
   parsedJSON?: Record<string, unknown>;
   rawJSON?: string;
+  gameDate?: string;
+  gameShichen?: string;
+  location?: string;
 }
 
 // 游戏响应JSON结构

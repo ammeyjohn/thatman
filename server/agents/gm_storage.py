@@ -199,6 +199,7 @@ class GMStorage:
         self._db_world_snaps: str = f"{self._couch_db_prefix}world_snaps"
         self._db_chat_history: str = f"{self._couch_db_prefix}chat_history"
         self._db_layouts: str = f"{self._couch_db_prefix}layouts"
+        self._db_world_time: str = f"{self._couch_db_prefix}world_time"
 
         # 初始化 CouchDB httpx 客户端
         self._couch_client: httpx.Client = httpx.Client(
@@ -241,6 +242,7 @@ class GMStorage:
             self._db_world_snaps,
             self._db_chat_history,
             self._db_layouts,
+            self._db_world_time,
         ]
         for db_name in db_names:
             try:
@@ -263,22 +265,23 @@ class GMStorage:
     def _ensure_chat_history_index(self) -> None:
         """确保 chat_history 数据库有 uid+timestamp 的 Mango 索引"""
         try:
-            index_doc = {
+            # 升序索引（uid 等值查询时，同一 uid 下按 timestamp 升序排列）
+            index_doc_asc = {
                 "index": {
                     "fields": ["uid", "timestamp"]
                 },
-                "name": "uid-timestamp-index",
+                "name": "uid-timestamp-asc-index",
                 "type": "json"
             }
             resp = self._couch_request(
                 "POST",
                 f"/{self._db_chat_history}/_index",
-                json_data=index_doc,
+                json_data=index_doc_asc,
             )
             if resp.status_code in (200, 201):
-                debug_log("chat_history 索引创建/已存在: uid-timestamp-index")
+                debug_log("chat_history 索引创建/已存在: uid-timestamp-asc-index")
             else:
-                warn_log(f"chat_history 索引创建失败: 状态码={resp.status_code}, 响应={resp.text[:200]}")
+                warn_log(f"chat_history 升序索引创建失败: 状态码={resp.status_code}, 响应={resp.text[:200]}")
         except Exception as e:
             error_log(f"chat_history 索引创建异常: {e}")
 
@@ -752,6 +755,75 @@ class GMStorage:
             return {}
 
     # ================================================================
+    # 世界时间操作
+    # ================================================================
+
+    def couch_get_world_time(self) -> dict:
+        """
+        获取世界时间状态
+
+        文档 ID 固定为 'world_time_state'。
+
+        Returns:
+            时间状态字典，失败返回空字典
+        """
+        try:
+            resp = self._couch_request("GET", f"/{self._db_world_time}/world_time_state")
+            if resp.status_code == 200:
+                data = resp.json()
+                debug_log("获取世界时间状态成功")
+                return data
+            elif resp.status_code == 404:
+                debug_log("世界时间状态不存在，首次初始化")
+                return {}
+            else:
+                warn_log(f"获取世界时间状态失败, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"获取世界时间状态异常: {e}")
+            return {}
+
+    def couch_save_world_time(self, time_data: dict) -> dict:
+        """
+        保存世界时间状态
+
+        文档 ID 固定为 'world_time_state'，自动携带 _rev 进行更新。
+
+        Args:
+            time_data: 时间状态数据
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            # 先查询现有文档获取 _rev
+            resp = self._couch_request("GET", f"/{self._db_world_time}/world_time_state")
+            if resp.status_code == 200:
+                existing = resp.json()
+                if "_rev" in existing:
+                    time_data["_rev"] = existing["_rev"]
+            elif resp.status_code != 404:
+                warn_log(f"查询世界时间文档失败, 状态码: {resp.status_code}")
+
+            # 确保文档 ID 正确
+            time_data["_id"] = "world_time_state"
+
+            resp = self._couch_request(
+                "PUT",
+                f"/{self._db_world_time}/world_time_state",
+                json_data=time_data,
+            )
+            if resp.status_code in (201, 202):
+                info_log("保存世界时间状态成功")
+                return resp.json()
+            else:
+                warn_log(f"保存世界时间状态失败, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存世界时间状态异常: {e}")
+            return {}
+
+    # ================================================================
     # 聊天记录操作
     # ================================================================
 
@@ -764,6 +836,9 @@ class GMStorage:
         actions: Optional[list] = None,
         player_update: Optional[dict] = None,
         ui_config: Optional[dict] = None,
+        game_date: Optional[str] = None,
+        game_shichen: Optional[str] = None,
+        location: Optional[str] = None,
     ) -> dict:
         """
         保存单条聊天消息到 thatman_chat_history
@@ -776,6 +851,9 @@ class GMStorage:
             actions: 建议动作列表（仅 NPC 消息）
             player_update: 玩家数据变更（仅 NPC 消息）
             ui_config: UI 配置变更（仅 NPC 消息）
+            game_date: 游戏日期，如"天元三千六百年·正月初一"
+            game_shichen: 游戏时辰，如"卯时·清晨"
+            location: 当前地点
 
         Returns:
             CouchDB 写入响应，失败返回空字典
@@ -795,6 +873,12 @@ class GMStorage:
                 doc["player_update"] = player_update
             if ui_config:
                 doc["ui_config"] = ui_config
+            if game_date:
+                doc["game_date"] = game_date
+            if game_shichen:
+                doc["game_shichen"] = game_shichen
+            if location:
+                doc["location"] = location
 
             resp = self._couch_request("PUT", f"/{self._db_chat_history}/{doc_id}", json_data=doc)
             if resp.status_code in (201, 202):
@@ -809,25 +893,27 @@ class GMStorage:
 
     def get_chat_history(self, uid: str, limit: int = 100, before_timestamp: Optional[int] = None) -> list:
         """
-        获取用户聊天历史
+        获取用户聊天历史（支持分页）
 
         Args:
             uid: 玩家唯一标识
             limit: 返回消息数量上限
-            before_timestamp: 获取此时间戳之前的消息（用于分页）
+            before_timestamp: 获取此时间戳之前的消息（用于分页加载更早记录）
 
         Returns:
-            聊天消息列表，按时间升序排列，失败返回空列表
+            聊天消息列表，按时间升序排列（从早到晚），失败返回空列表
         """
         try:
             selector: Dict[str, Any] = {"uid": uid}
             if before_timestamp:
                 selector["timestamp"] = {"$lt": before_timestamp}
 
+            # 不在查询中指定 sort，避免 json 索引的 sort 字段必须完全匹配索引的限制
+            # CouchDB 仍会使用 uid-timestamp-asc-index 进行 selector 筛选
+            # 返回结果在同一 uid 下天然按 timestamp 升序排列，在 Python 中截取即可
             body = {
                 "selector": selector,
-                "sort": [{"timestamp": "asc"}],
-                "limit": limit,
+                "limit": 10000,
             }
 
             resp = self._couch_request(
@@ -838,10 +924,15 @@ class GMStorage:
             if resp.status_code == 200:
                 data = resp.json()
                 docs = data.get("docs", [])
-                info_log(f"获取聊天历史成功: uid={uid}, 数量={len(docs)}")
+                # 反转为降序（最新的在前），截取前 limit 条
+                docs.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+                docs = docs[:limit]
+                # 再反转为升序（时间从早到晚，适合前端展示）
+                docs.reverse()
+                info_log(f"获取聊天历史成功: uid={uid}, 数量={len(docs)}, before_timestamp={before_timestamp}")
                 return docs
             else:
-                warn_log(f"获取聊天历史失败: uid={uid}, 状态码: {resp.status_code}")
+                warn_log(f"获取聊天历史失败: uid={uid}, 状态码: {resp.status_code}, 响应={resp.text[:200]}")
                 return []
         except Exception as e:
             error_log(f"获取聊天历史异常: uid={uid}, 错误: {e}")

@@ -210,6 +210,15 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
               <span data-name="sender-name" className="text-xs text-[#a0c0c0] mb-1">{message.senderName}</span>
             )}
 
+            {/* Game Time & Location Context */}
+            {!isPlayer && (message.gameDate || message.gameShichen || message.location) && (
+              <div className="flex items-center gap-2 mb-1 text-[10px] text-[#5a7a7a]">
+                {message.gameDate && <span>{message.gameDate}</span>}
+                {message.gameShichen && <span>· {message.gameShichen}</span>}
+                {message.location && <span>· {message.location}</span>}
+              </div>
+            )}
+
             {/* Message Bubble */}
             <div
               data-name="message-bubble"

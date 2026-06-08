@@ -1,11 +1,9 @@
 import React from 'react';
 import { useGameStore } from '../stores/gameStore';
-import { useChatStore } from '../stores/chatStore';
 import { MapPin, Clock } from 'lucide-react';
 
 export function WorldEventPanel() {
   const { world, worldLayout } = useGameStore();
-  const { lastTime } = useChatStore();
   const layoutRef = React.useRef<HTMLDivElement>(null);
   const scriptsRef = React.useRef<string[]>([]);
 
@@ -32,9 +30,6 @@ export function WorldEventPanel() {
     });
   }, [world, worldLayout]);
 
-  // 优先使用从后端 JSON 解析出的 location/time，否则回退到 gameStore 的默认值
-  const displayTime = lastTime || world.time;
-
   return (
     <div className="w-[280px] h-full bg-[#0d1f1f] border-l border-[#2d5a5a]/30 flex flex-col overflow-hidden">
       {/* Header */}
@@ -48,36 +43,47 @@ export function WorldEventPanel() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
+        {/* Game Date — 始终显示在顶部 */}
+        {world.gameDate && (
+          <div className="mb-4 p-3 bg-gradient-to-r from-[#c9a227]/10 to-transparent rounded-lg border border-[#c9a227]/30">
+            <div className="flex items-center gap-2 text-[#c9a227]">
+              <span className="text-sm font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                {world.gameDate}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Shichen (Time Period) — 始终显示 */}
+        {(world.time || world.timePeriod) && (
+          <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
+            <div className="flex items-center gap-2 text-[#7ababa]">
+              <Clock className="w-4 h-4" />
+              <span className="text-sm font-medium">
+                {world.time}{world.timePeriod ? ` · ${world.timePeriod}` : ''}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Location — 始终显示 */}
+        {world.location && (
+          <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
+            <div className="flex items-center gap-2 text-[#5ab8b8]">
+              <MapPin className="w-4 h-4" />
+              <span className="text-sm font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                {world.location}
+              </span>
+            </div>
+          </div>
+        )}
+
         {worldLayout ? (
           // 动态 HTML 布局渲染
           <div ref={layoutRef} dangerouslySetInnerHTML={{ __html: worldLayout }} />
         ) : (
-          // 原有硬编码渲染
+          // 原有硬编码渲染（无布局时的回退）
           <>
-            {/* Location */}
-            {world.location && (
-              <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
-                <div className="flex items-center gap-2 text-[#5ab8b8]">
-                  <MapPin className="w-4 h-4" />
-                  <span className="text-sm font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>
-                    {world.location}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Time */}
-            {(displayTime || world.timePeriod) && (
-              <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
-                <div className="flex items-center gap-2 text-[#7ababa]">
-                  <Clock className="w-4 h-4" />
-                  <span className="text-sm font-medium">
-                    {displayTime}{world.timePeriod ? ` · ${world.timePeriod}` : ''}
-                  </span>
-                </div>
-              </div>
-            )}
-
             {/* Weather & Spirit Tide */}
             {(world.weather || world.spiritTide) && (
               <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
