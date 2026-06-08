@@ -206,23 +206,18 @@ export function applyGmResponseToGameStore(
     }
   }
 
-  // 当角色数据发生重大变化时，自动触发布局生成
+  // 每次对话后，只要有 player_update 就重新生成角色状态布局
+  // （因为 current_location/current_status 等字段每次都会变化，布局需要同步更新）
   if (playerUpdate && Object.keys(playerUpdate).length > 0) {
-    const significantFields = ['realm', 'realm_stage', 'level', 'current_location', 'current_status', 'name'];
-    const hasSignificantChange = significantFields.some(field => playerUpdate[field] !== undefined);
-
-    if (hasSignificantChange && !layoutHint) {
+    if (!layoutHint || (layoutHint !== 'character' && layoutHint !== 'both')) {
       const { generateLayout } = useGameStore.getState();
       generateLayout('character');
     }
   }
 
-  // 当世界数据变化时，自动触发世界面板布局生成
+  // 当世界数据变化时，重新生成世界面板布局
   if (uiConfig && Object.keys(uiConfig).length > 0) {
-    const worldSignificantFields = ['location', 'time', 'weather'];
-    const hasWorldChange = worldSignificantFields.some(field => uiConfig[field] !== undefined);
-
-    if (hasWorldChange && layoutHint !== 'world' && layoutHint !== 'both') {
+    if (!layoutHint || (layoutHint !== 'world' && layoutHint !== 'both')) {
       const { generateLayout } = useGameStore.getState();
       generateLayout('world');
     }

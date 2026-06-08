@@ -1,4 +1,4 @@
-llama-server -m "$MODELSCOPE/unsloth/Qwen3___6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf" \
+llama-server -m "$MODELSCOPE/unsloth/Qwen3___6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf" \
   --port 7778 \
   --host 0.0.0.0 \
   -ngl 99 \

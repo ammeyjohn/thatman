@@ -316,11 +316,16 @@ class GameMaster:
         messages.append({"role": "user", "content": user_input})
         debug_log(f"[build_messages] Step5 追加用户输入: 长度={len(user_input)}")
 
+        # 追加 JSON 格式约束提示
+        json_format_prompt = (
+            "请严格按照以下 JSON 格式返回，不要输出任何其他文字：\n"
+            "{\"dialog\":\"回复内容\",\"actions\":[],\"player_update\":{},\"ui_config\":{},\"save_flag\":\"\"}"
+        )
+        messages.append({"role": "user", "content": json_format_prompt})
+        debug_log(f"[build_messages] Step6 追加JSON格式约束")
+
         debug_log(f"[build_messages] 完成: 总消息数={len(messages)}")
         return messages
-
-    # JSON 重试最大次数
-    MAX_JSON_RETRY = 2
 
     def llm_chat_loop(self, messages: List[Dict[str, str]], llm: ChatOpenAI) -> Dict[str, Any]:
         """
@@ -328,7 +333,7 @@ class GameMaster:
 
         调用 LLM，如果返回包含 tool_calls 则执行工具并继续循环，
         直到 LLM 不再返回 tool_calls 或达到最大循环次数。
-        当 LLM 返回非 JSON 文本时，追加提示要求重新输出 JSON 格式，最多重试 MAX_JSON_RETRY 次。
+        LLM 返回非 JSON 文本时直接使用原始文本作为 dialog，不再重试生成。
 
         Args:
             messages: 消息列表
@@ -358,9 +363,6 @@ class GameMaster:
         debug_log("[llm_chat_loop] Step2 转换消息为LangChain格式")
         langchain_messages = self._convert_messages(messages)
 
-        # JSON 重试计数器
-        json_retry_count = 0
-
         for loop_count in range(self.MAX_TOOL_LOOP):
             debug_log(f"[llm_chat_loop] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
 
@@ -379,25 +381,6 @@ class GameMaster:
                 content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
                 debug_log(f"[llm_chat_loop] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
                 parsed = self._parse_json_response(content)
-
-                # 检查是否解析失败（dialog 等于原始内容说明 JSON 解析失败）
-                if parsed.get("__json_parse_failed__"):
-                    parsed.pop("__json_parse_failed__", None)
-                    if json_retry_count < self.MAX_JSON_RETRY:
-                        json_retry_count += 1
-                        warn_log(f"[llm_chat_loop] JSON解析失败，第 {json_retry_count}/{self.MAX_JSON_RETRY} 次重试")
-                        # 追加 AI 回复和重试提示
-                        langchain_messages.append(ai_message)
-                        retry_prompt = (
-                            "你上面的回复不是合法的JSON格式。请严格按照标准JSON格式重新输出，"
-                            "包含 dialog、actions、player_update、ui_config、save_flag 字段。"
-                            "将你上面的叙述内容放入 dialog 字段，禁止输出JSON以外的任何文字。"
-                        )
-                        langchain_messages.append(HumanMessage(content=retry_prompt))
-                        continue
-                    else:
-                        warn_log(f"[llm_chat_loop] JSON重试已达上限 {self.MAX_JSON_RETRY} 次，使用回退结果")
-                        return parsed
 
                 return parsed
 
@@ -779,18 +762,18 @@ class GameMaster:
             if end > start:
                 text = text[start:end].strip()
 
+        # 尝试解析 JSON，成功则直接使用，失败则将原始文本作为 dialog
         try:
             result = json.loads(text)
             if isinstance(result, dict):
                 debug_log("LLM 返回 JSON 解析成功")
                 return result
-            else:
-                warn_log(f"LLM 返回 JSON 不是字典类型: {type(result)}")
-                return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": "", "__json_parse_failed__": True}
-        except json.JSONDecodeError as e:
-            warn_log(f"LLM 返回 JSON 解析失败: {e}, 原始内容: {content[:200]}")
-            # JSON 解析失败，将原始文本作为 dialog 返回，标记解析失败供重试判断
-            return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": "", "__json_parse_failed__": True}
+        except json.JSONDecodeError:
+            pass
+
+        # 不是 JSON 格式，直接使用原始文本
+        info_log(f"LLM 返回非 JSON 格式，直接使用原始文本: {content[:200]}")
+        return {"dialog": content, "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
     def _extract_dialog_from_partial_json(self, accumulated: str, prev_dialog: str) -> str:
         """
@@ -878,9 +861,6 @@ class GameMaster:
         debug_log("[llm_chat_loop_stream] Step2 转换消息为LangChain格式")
         langchain_messages = self._convert_messages(messages)
 
-        # JSON 重试计数器
-        json_retry_count = 0
-
         for loop_count in range(self.MAX_TOOL_LOOP):
             debug_log(f"[llm_chat_loop_stream] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
 
@@ -916,29 +896,10 @@ class GameMaster:
             tool_calls = getattr(full_chunk, "tool_calls", None) if full_chunk else None
 
             if not tool_calls:
-                # 无工具调用，解析完整 JSON
+                # 无工具调用，解析完整 JSON，非 JSON 则直接使用原始文本
                 content = full_chunk.content if full_chunk and hasattr(full_chunk, 'content') else ""
                 debug_log(f"[llm_chat_loop_stream] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
                 resp_json = self._parse_json_response(content)
-
-                # 检查是否解析失败，尝试重试
-                if resp_json.get("__json_parse_failed__"):
-                    resp_json.pop("__json_parse_failed__", None)
-                    if json_retry_count < self.MAX_JSON_RETRY:
-                        json_retry_count += 1
-                        warn_log(f"[llm_chat_loop_stream] JSON解析失败，第 {json_retry_count}/{self.MAX_JSON_RETRY} 次重试")
-                        # 追加 AI 回复和重试提示
-                        if full_chunk:
-                            langchain_messages.append(full_chunk)
-                        retry_prompt = (
-                            "你上面的回复不是合法的JSON格式。请严格按照标准JSON格式重新输出，"
-                            "包含 dialog、actions、player_update、ui_config、save_flag 字段。"
-                            "将你上面的叙述内容放入 dialog 字段，禁止输出JSON以外的任何文字。"
-                        )
-                        langchain_messages.append(HumanMessage(content=retry_prompt))
-                        continue
-                    else:
-                        warn_log(f"[llm_chat_loop_stream] JSON重试已达上限 {self.MAX_JSON_RETRY} 次，使用回退结果")
 
                 # 发送完整结果事件
                 yield self._sse_event("result", {

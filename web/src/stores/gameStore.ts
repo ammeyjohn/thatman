@@ -12,6 +12,7 @@ interface GameState {
   worldLayout: string | null;
   isGeneratingCharacterLayout: boolean;
   isGeneratingWorldLayout: boolean;
+  _layoutGenerationQueue: { character: boolean; world: boolean };
   setCharacterLayout: (layout: string | null) => void;
   setWorldLayout: (layout: string | null) => void;
   loadLayout: (panelType: 'character' | 'world') => Promise<void>;
@@ -81,6 +82,7 @@ export const useGameStore = create<GameState>((set) => ({
   worldLayout: null,
   isGeneratingCharacterLayout: false,
   isGeneratingWorldLayout: false,
+  _layoutGenerationQueue: { character: false, world: false },
   updateCharacter: (updates) =>
     set((state) => ({
       character: { ...state.character, ...updates },
@@ -128,6 +130,23 @@ export const useGameStore = create<GameState>((set) => ({
     const uid = getOrCreateUserId();
     if (!uid) return;
 
+    // 防抖：如果正在生成中，标记需要重新生成，等当前生成完成后再触发
+    const isGenerating = panelType === 'character'
+      ? useGameStore.getState().isGeneratingCharacterLayout
+      : useGameStore.getState().isGeneratingWorldLayout;
+
+    if (isGenerating) {
+      // 标记需要重新生成
+      useGameStore.setState((state) => ({
+        _layoutGenerationQueue: {
+          ...state._layoutGenerationQueue,
+          [panelType]: true,
+        },
+      }));
+      console.log(`[Layout] ${panelType} 正在生成中，标记待重新生成`);
+      return;
+    }
+
     // 设置生成状态
     if (panelType === 'character') {
       set({ isGeneratingCharacterLayout: true });
@@ -171,6 +190,23 @@ export const useGameStore = create<GameState>((set) => ({
         set({ isGeneratingCharacterLayout: false });
       } else {
         set({ isGeneratingWorldLayout: false });
+      }
+
+      // 检查是否需要重新生成（防抖后重试）
+      const queueState = useGameStore.getState()._layoutGenerationQueue;
+      if (queueState[panelType]) {
+        // 清除标记并重新生成
+        useGameStore.setState((state) => ({
+          _layoutGenerationQueue: {
+            ...state._layoutGenerationQueue,
+            [panelType]: false,
+          },
+        }));
+        console.log(`[Layout] ${panelType} 检测到待重新生成标记，开始重新生成`);
+        // 使用 setTimeout 避免递归过深
+        setTimeout(() => {
+          useGameStore.getState().generateLayout(panelType);
+        }, 100);
       }
     }
   },

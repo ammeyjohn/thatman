@@ -94,7 +94,7 @@ class OpenAIEmbeddingClient:
 
         try:
             resp = self._client.post(
-                "/embeddings",
+                "embeddings",
                 json={
                     "model": self._model_name,
                     "input": texts,
