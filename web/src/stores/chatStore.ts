@@ -52,6 +52,28 @@ interface ChatState {
 
 const initialMessages: ChatMessage[] = [];
 
+/**
+ * 解析聊天内容：如果内容是 JSON 字符串且包含 dialog 字段，提取 dialog 作为展示文本
+ * 用于兼容数据库中错误保存为 JSON 格式的旧记录
+ */
+const parseChatContent = (content: string): string => {
+  if (!content || typeof content !== 'string') return content || '';
+  // 快速判断：以 { 或 [ 开头才尝试解析
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return content;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && 'dialog' in parsed && typeof parsed.dialog === 'string') {
+      return parsed.dialog;
+    }
+  } catch {
+    // 不是有效的 JSON，直接返回原文
+  }
+  return content;
+};
+
 const initialStreamStats: StreamStats = {
   contextTokens: 0,
   contextMax: 262144,
@@ -519,7 +541,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
         id: (doc._id as string) || generateId(),
         sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
-        content: (doc.content as string) || '',
+        content: parseChatContent((doc.content as string) || ''),
         timestamp: (doc.timestamp as number) || Date.now(),
         type: 'normal' as const,
         actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
@@ -577,7 +599,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newMessages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
         id: (doc._id as string) || generateId(),
         sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
-        content: (doc.content as string) || '',
+        content: parseChatContent((doc.content as string) || ''),
         timestamp: (doc.timestamp as number) || Date.now(),
         type: 'normal' as const,
         actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
