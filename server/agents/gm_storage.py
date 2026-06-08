@@ -41,15 +41,130 @@ from hindsight_memory import (
 # 复用 gm_logger 的 debug 开关控制日志函数
 from gm_logger import debug_log, info_log, warn_log, error_log
 
-# 复用 search_episode 的 EmbeddingClient 和 QdrantClient
+# 复用 search_episode 的 QdrantClient
 from skills.search_episode import (
-    _get_embedding_client,
     _get_qdrant_client,
-    EmbeddingClient,
 )
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+
+# ───────────────────────────────────────────────
+# OpenAI Embedding 客户端
+# ───────────────────────────────────────────────
+
+class OpenAIEmbeddingClient:
+    """基于 OpenAI 兼容 API 的 Embedding 客户端"""
+
+    def __init__(
+        self,
+        api_base: str,
+        api_key: str = "not-needed",
+        model_name: str = "",
+        max_tokens: int = 4096,
+    ):
+        self._api_base = api_base.rstrip("/")
+        self._api_key = api_key
+        self._model_name = model_name
+        self._max_tokens = max_tokens
+        self._vector_size: Optional[int] = None
+        self._client = httpx.Client(
+            base_url=self._api_base,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(60.0),
+        )
+        info_log(f"OpenAI Embedding 客户端初始化: model={model_name}, api_base={api_base}")
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        """
+        调用 OpenAI 兼容的 /embeddings 接口生成向量
+
+        Args:
+            texts: 文本列表
+
+        Returns:
+            向量列表
+        """
+        if not texts:
+            return []
+
+        try:
+            resp = self._client.post(
+                "/embeddings",
+                json={
+                    "model": self._model_name,
+                    "input": texts,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            embeddings = []
+            # 按 index 排序确保顺序一致
+            for item in sorted(data.get("data", []), key=lambda x: x.get("index", 0)):
+                embeddings.append(item.get("embedding", []))
+
+            # 缓存向量维度
+            if embeddings and self._vector_size is None:
+                self._vector_size = len(embeddings[0])
+
+            return embeddings
+
+        except Exception as e:
+            error_log(f"OpenAI Embedding 调用失败: {e}")
+            # 返回零向量占位
+            fallback_size = self._vector_size or 1024
+            return [[0.0] * fallback_size] * len(texts)
+
+    @property
+    def vector_size(self) -> int:
+        """获取向量维度"""
+        if self._vector_size is not None:
+            return self._vector_size
+        # 首次调用时通过空查询获取维度
+        try:
+            result = self.embed(["test"])
+            if result and result[0]:
+                self._vector_size = len(result[0])
+                return self._vector_size
+        except Exception:
+            pass
+        return 1024
+
+
+# 全局单例缓存
+_openai_embedding_client: Optional[OpenAIEmbeddingClient] = None
+
+
+def _get_openai_embedding_client(config: dict) -> Optional[OpenAIEmbeddingClient]:
+    """获取全局单例 OpenAIEmbeddingClient（懒加载）"""
+    global _openai_embedding_client
+    if _openai_embedding_client is None:
+        try:
+            emb_cfg = config.get("embedding_model", {})
+            api_base = emb_cfg.get("api_base", "http://localhost:8888/v1")
+            api_key = emb_cfg.get("api_key", "not-needed")
+            model_name = emb_cfg.get("model_name", "")
+            max_tokens = int(emb_cfg.get("max_tokens", 4096))
+
+            if not model_name:
+                warn_log("embedding_model.model_name 未配置，无法初始化 Embedding 客户端")
+                return None
+
+            _openai_embedding_client = OpenAIEmbeddingClient(
+                api_base=api_base,
+                api_key=api_key,
+                model_name=model_name,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            error_log(f"初始化 OpenAIEmbeddingClient 失败: {e}")
+            return None
+    return _openai_embedding_client
 
 
 class GMStorage:
@@ -786,7 +901,7 @@ class GMStorage:
         """
         语义检索过往剧情
 
-        复用 search_episode 的 EmbeddingClient 和 QdrantClient。
+        复用 search_episode 的 QdrantClient，使用 OpenAI 兼容 Embedding API。
 
         Args:
             query: 查询文本
@@ -796,9 +911,9 @@ class GMStorage:
             相似剧情列表，每项包含 content 和 score，失败返回空列表
         """
         try:
-            embedding_client = _get_embedding_client()
+            embedding_client = _get_openai_embedding_client(self.config)
             if not embedding_client:
-                warn_log("EmbeddingClient 未初始化，无法检索剧情向量")
+                warn_log("OpenAIEmbeddingClient 未初始化，无法检索剧情向量")
                 return []
 
             qdrant_client = _get_qdrant_client()
@@ -843,7 +958,7 @@ class GMStorage:
         """
         剧情入库
 
-        复用 search_episode 的 EmbeddingClient 和 QdrantClient。
+        复用 search_episode 的 QdrantClient，使用 OpenAI 兼容 Embedding API。
 
         Args:
             content: 剧情文本内容
@@ -857,9 +972,9 @@ class GMStorage:
                 warn_log("剧情内容为空，跳过入库")
                 return False
 
-            embedding_client = _get_embedding_client()
+            embedding_client = _get_openai_embedding_client(self.config)
             if not embedding_client:
-                warn_log("EmbeddingClient 未初始化，无法入库剧情向量")
+                warn_log("OpenAIEmbeddingClient 未初始化，无法入库剧情向量")
                 return False
 
             qdrant_client = _get_qdrant_client()
