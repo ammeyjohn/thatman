@@ -45,6 +45,7 @@ export interface WorldState {
   events: WorldEvent[];
   gameDate: string;
   gameHour: number;
+  gameMinute: number;
   shichenIndex: number;
 }
 

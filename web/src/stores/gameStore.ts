@@ -3,6 +3,52 @@ import type { CharacterState, WorldState } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
+// 时辰定义（与后端 world_time_service.py 保持一致）
+const SHICHEN_LIST = [
+  { name: '子时', period: '深夜', start: 23, end: 1 },
+  { name: '丑时', period: '凌晨', start: 1, end: 3 },
+  { name: '寅时', period: '黎明', start: 3, end: 5 },
+  { name: '卯时', period: '清晨', start: 5, end: 7 },
+  { name: '辰时', period: '早晨', start: 7, end: 9 },
+  { name: '巳时', period: '上午', start: 9, end: 11 },
+  { name: '午时', period: '正午', start: 11, end: 13 },
+  { name: '未时', period: '午后', start: 13, end: 15 },
+  { name: '申时', period: '下午', start: 15, end: 17 },
+  { name: '酉时', period: '黄昏', start: 17, end: 19 },
+  { name: '戌时', period: '傍晚', start: 19, end: 21 },
+  { name: '亥时', period: '夜晚', start: 21, end: 23 },
+];
+
+function getShichen(hour: number): { name: string; period: string; index: number } {
+  if (hour === 23 || hour === 0) {
+    return { name: '子时', period: '深夜', index: 0 };
+  }
+  for (let idx = 0; idx < SHICHEN_LIST.length; idx++) {
+    const sc = SHICHEN_LIST[idx];
+    if (sc.start <= hour && hour < sc.end) {
+      return { name: sc.name, period: sc.period, index: idx };
+    }
+  }
+  return { name: '子时', period: '深夜', index: 0 };
+}
+
+function advanceGameTime(state: WorldState, minutes: number): Partial<WorldState> {
+  const totalMinutes = state.gameHour * 60 + state.gameMinute + minutes;
+  const newHour = Math.floor(totalMinutes / 60) % 24;
+  const newMinute = totalMinutes % 60;
+
+  const shichen = getShichen(newHour);
+  const updates: Partial<WorldState> = {
+    gameHour: newHour,
+    gameMinute: newMinute,
+    time: shichen.name,
+    timePeriod: shichen.period,
+    shichenIndex: shichen.index,
+  };
+
+  return updates;
+}
+
 interface GameState {
   character: CharacterState;
   world: WorldState;
@@ -23,6 +69,15 @@ interface GameState {
   connectWorldTimeSSE: () => void;
   disconnectWorldTimeSSE: () => void;
   fetchWorldTime: () => Promise<void>;
+  // 时间同步内部状态和方法
+  _worldTimeTickInterval: number | null;
+  _worldTimePollInterval: number | null;
+  _lastServerSyncAt: number;
+  _syncWorldTime: (data: Partial<WorldState> & { gameMinute?: number }) => void;
+  _startLocalWorldTimeTick: () => void;
+  _stopLocalWorldTimeTick: () => void;
+  _startWorldTimePolling: () => void;
+  _stopWorldTimePolling: () => void;
 }
 
 const initialCharacter: CharacterState = {
@@ -79,10 +134,11 @@ const initialWorld: WorldState = {
   ],
   gameDate: '',
   gameHour: 0,
+  gameMinute: 0,
   shichenIndex: 0,
 };
 
-export const useGameStore = create<GameState>((set) => ({
+export const useGameStore = create<GameState>((set, get) => ({
   character: initialCharacter,
   world: initialWorld,
   characterLayout: null,
@@ -91,6 +147,10 @@ export const useGameStore = create<GameState>((set) => ({
   isGeneratingWorldLayout: false,
   _layoutGenerationQueue: { character: false, world: false },
   worldTimeSSE: null,
+  _worldTimeTickInterval: null,
+  _worldTimePollInterval: null,
+  _lastServerSyncAt: 0,
+
   updateCharacter: (updates) =>
     set((state) => ({
       character: { ...state.character, ...updates },
@@ -219,6 +279,90 @@ export const useGameStore = create<GameState>((set) => ({
     }
   },
 
+  _syncWorldTime: (data) => {
+    const now = Date.now();
+    set((state) => {
+      const updates: Partial<WorldState> = {};
+      if (typeof data.gameDate === 'string') updates.gameDate = data.gameDate;
+      if (typeof data.gameHour === 'number') updates.gameHour = data.gameHour;
+      if (typeof data.gameMinute === 'number') updates.gameMinute = data.gameMinute;
+      if (typeof data.time === 'string') updates.time = data.time;
+      if (typeof data.timePeriod === 'string') updates.timePeriod = data.timePeriod;
+      if (typeof data.shichenIndex === 'number') updates.shichenIndex = data.shichenIndex;
+
+      // 如果服务端只给了 gameHour 没给 gameMinute，默认补 0
+      if (typeof data.gameHour === 'number' && typeof data.gameMinute !== 'number') {
+        updates.gameMinute = 0;
+      }
+
+      // 如果给了 gameHour 和 gameMinute 但没给 time，自动计算
+      if ((typeof updates.gameHour === 'number' || typeof state.world.gameHour === 'number')
+        && (typeof updates.gameMinute === 'number' || typeof state.world.gameMinute === 'number')) {
+        const hour = updates.gameHour ?? state.world.gameHour;
+        const minute = updates.gameMinute ?? state.world.gameMinute;
+        const shichen = getShichen(hour);
+        updates.time = shichen.name;
+        updates.timePeriod = shichen.period;
+        updates.shichenIndex = shichen.index;
+        updates.gameHour = hour;
+        updates.gameMinute = minute;
+      }
+
+      return {
+        world: { ...state.world, ...updates },
+        _lastServerSyncAt: now,
+      };
+    });
+  },
+
+  _startLocalWorldTimeTick: () => {
+    const { _worldTimeTickInterval } = get();
+    if (_worldTimeTickInterval) return;
+
+    // 每 6 秒推进 1 游戏分钟（与后端 TICK_INTERVAL = 6 保持一致）
+    const interval = window.setInterval(() => {
+      set((state) => {
+        const updates = advanceGameTime(state.world, 1);
+        return { world: { ...state.world, ...updates } };
+      });
+    }, 6000);
+
+    set({ _worldTimeTickInterval: interval });
+    console.log('[WorldTime] 本地时间推进已启动');
+  },
+
+  _stopLocalWorldTimeTick: () => {
+    const { _worldTimeTickInterval } = get();
+    if (_worldTimeTickInterval) {
+      clearInterval(_worldTimeTickInterval);
+      set({ _worldTimeTickInterval: null });
+      console.log('[WorldTime] 本地时间推进已停止');
+    }
+  },
+
+  _startWorldTimePolling: () => {
+    const { _worldTimePollInterval } = get();
+    if (_worldTimePollInterval) return;
+
+    // 每 30 秒轮询一次服务端时间作为校准兜底
+    const interval = window.setInterval(() => {
+      const { fetchWorldTime } = get();
+      fetchWorldTime();
+    }, 30000);
+
+    set({ _worldTimePollInterval: interval });
+    console.log('[WorldTime] 时间轮询已启动');
+  },
+
+  _stopWorldTimePolling: () => {
+    const { _worldTimePollInterval } = get();
+    if (_worldTimePollInterval) {
+      clearInterval(_worldTimePollInterval);
+      set({ _worldTimePollInterval: null });
+      console.log('[WorldTime] 时间轮询已停止');
+    }
+  },
+
   loadUserInfo: async () => {
     const uid = getOrCreateUserId();
     if (!uid) return;
@@ -289,10 +433,22 @@ export const useGameStore = create<GameState>((set) => ({
 
       console.log('[UserInfo] 用户信息加载成功');
 
-      // 加载世界时间
-      const { fetchWorldTime, connectWorldTimeSSE } = useGameStore.getState();
-      fetchWorldTime();
-      connectWorldTimeSSE();
+      // 加载世界时间并启动时间同步机制
+      const state = get();
+      await state.fetchWorldTime();
+      state.connectWorldTimeSSE();
+      state._startLocalWorldTimeTick();
+      state._startWorldTimePolling();
+
+      // 监听页面可见性变化，切回前台时立即同步时间
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          const { fetchWorldTime } = get();
+          fetchWorldTime();
+        }
+      };
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
 
       // 加载布局
       const { loadLayout } = useGameStore.getState();
@@ -301,14 +457,14 @@ export const useGameStore = create<GameState>((set) => ({
 
       // 延迟检查布局是否生成成功，如果未成功则重试
       setTimeout(() => {
-        const state = useGameStore.getState();
-        if (!state.characterLayout) {
+        const st = useGameStore.getState();
+        if (!st.characterLayout) {
           console.log('[Layout] 角色布局未生成，尝试重新生成');
-          state.generateLayout('character');
+          st.generateLayout('character');
         }
-        if (!state.worldLayout) {
+        if (!st.worldLayout) {
           console.log('[Layout] 世界布局未生成，尝试重新生成');
-          state.generateLayout('world');
+          st.generateLayout('world');
         }
       }, 3000);
     } catch (error) {
@@ -323,16 +479,15 @@ export const useGameStore = create<GameState>((set) => ({
       });
       if (!response.ok) return;
       const data = await response.json();
-      set((state) => ({
-        world: {
-          ...state.world,
-          time: data.shichen_name || state.world.time,
-          timePeriod: data.shichen_period || state.world.timePeriod,
-          gameDate: data.game_date || '',
-          gameHour: data.game_hour ?? 0,
-          shichenIndex: data.shichen_index ?? 0,
-        },
-      }));
+      const { _syncWorldTime } = get();
+      _syncWorldTime({
+        gameDate: data.game_date,
+        gameHour: data.game_hour,
+        gameMinute: data.game_minute,
+        time: data.shichen_name,
+        timePeriod: data.shichen_period,
+        shichenIndex: data.shichen_index,
+      });
     } catch (error) {
       console.error('获取世界时间失败:', error);
     }
@@ -349,16 +504,15 @@ export const useGameStore = create<GameState>((set) => ({
       eventSource.addEventListener('current_time', (event) => {
         try {
           const data = JSON.parse(event.data);
-          set((state) => ({
-            world: {
-              ...state.world,
-              time: data.shichen_name || state.world.time,
-              timePeriod: data.shichen_period || state.world.timePeriod,
-              gameDate: data.game_date || '',
-              gameHour: data.game_hour ?? 0,
-              shichenIndex: data.shichen_index ?? 0,
-            },
-          }));
+          const { _syncWorldTime } = get();
+          _syncWorldTime({
+            gameDate: data.game_date,
+            gameHour: data.game_hour,
+            gameMinute: data.game_minute,
+            time: data.shichen_name,
+            timePeriod: data.shichen_period,
+            shichenIndex: data.shichen_index,
+          });
         } catch (e) {
           console.error('解析世界时间SSE数据失败:', e);
         }
@@ -367,20 +521,23 @@ export const useGameStore = create<GameState>((set) => ({
       eventSource.addEventListener('shichen_change', (event) => {
         try {
           const data = JSON.parse(event.data);
-          set((state) => ({
-            world: {
-              ...state.world,
-              time: data.shichen_name || state.world.time,
-              timePeriod: data.shichen_period || state.world.timePeriod,
-              gameDate: data.game_date || '',
-              gameHour: data.game_hour ?? 0,
-              shichenIndex: data.shichen_index ?? 0,
-            },
-          }));
+          const { _syncWorldTime } = get();
+          _syncWorldTime({
+            gameDate: data.game_date,
+            gameHour: data.game_hour,
+            gameMinute: data.game_minute,
+            time: data.shichen_name,
+            timePeriod: data.shichen_period,
+            shichenIndex: data.shichen_index,
+          });
           console.log(`[WorldTime] 时辰变化: ${data.game_date} ${data.shichen_name}·${data.shichen_period}`);
         } catch (e) {
           console.error('解析时辰变化SSE数据失败:', e);
         }
+      });
+
+      eventSource.addEventListener('heartbeat', () => {
+        // 心跳事件，仅用于保持连接活跃，无需处理
       });
 
       eventSource.onerror = () => {
