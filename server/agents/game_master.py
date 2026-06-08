@@ -49,9 +49,11 @@ class GameMaster:
         self._init_chat_model()
         self._init_world_model()
 
-        # 3. 加载 GM system prompt
+        # 3. 加载 GM system prompt 与 user prompt
         self.system_prompt: str = ""
         self._load_system_prompt()
+        self.user_prompt: str = ""
+        self._load_user_prompt()
 
         # 4. 初始化 GMStorage 存储层
         self.storage: Optional[GMStorage] = None
@@ -155,6 +157,22 @@ class GameMaster:
         else:
             warn_log(f"GM system prompt 文件不存在: {prompt_path}")
             self.system_prompt = "你是游戏GM，负责管理游戏世界。"
+
+    def _load_user_prompt(self) -> None:
+        """加载 GM user prompt（格式约束，追加在用户输入之后）"""
+        prompt_path = Path(__file__).parent / "prompts" / "gm_user.md"
+        if prompt_path.exists():
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    self.user_prompt = f.read()
+                debug_log(f"加载 GM user prompt: {prompt_path}")
+                debug_log(f"GM user prompt 长度: {len(self.user_prompt)} 字符")
+            except Exception as e:
+                error_log(f"加载 GM user prompt 失败: {e}")
+                self.user_prompt = "请严格按照 JSON 格式返回，不要输出任何其他文字。"
+        else:
+            warn_log(f"GM user prompt 文件不存在: {prompt_path}")
+            self.user_prompt = "请严格按照 JSON 格式返回，不要输出任何其他文字。"
 
     def _init_storage(self) -> None:
         """初始化 GMStorage 存储层"""
@@ -318,13 +336,9 @@ class GameMaster:
         messages.append({"role": "user", "content": user_input})
         debug_log(f"[build_messages] Step5 追加用户输入: 长度={len(user_input)}")
 
-        # 追加 JSON 格式约束提示
-        json_format_prompt = (
-            "请严格按照以下 JSON 格式返回，不要输出任何其他文字：\n"
-            "{\"dialog\":\"回复内容\",\"actions\":[],\"player_update\":{},\"ui_config\":{},\"save_flag\":\"\"}"
-        )
-        messages.append({"role": "user", "content": json_format_prompt})
-        debug_log(f"[build_messages] Step6 追加JSON格式约束")
+        # 追加 GM user prompt（格式约束，加载自 gm_user.md）
+        messages.append({"role": "user", "content": self.user_prompt})
+        debug_log(f"[build_messages] Step6 追加GM user prompt（格式约束）")
 
         debug_log(f"[build_messages] 完成: 总消息数={len(messages)}")
         return messages
