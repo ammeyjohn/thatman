@@ -252,7 +252,8 @@ export function applyGmResponseToGameStore(
     }
   }
 
-  // 处理 layout_hint
+  // 处理 layout_hint - 仅根据 GM 的明确指示触发布局更新
+  // GM 会在角色/世界发生实质性变化时设置 layout_hint，日常对话不会触发
   const layoutHint = uiConfig.layout_hint as string | undefined;
   if (layoutHint && layoutHint !== '') {
     const { generateLayout } = useGameStore.getState();
@@ -260,23 +261,6 @@ export function applyGmResponseToGameStore(
       generateLayout('character');
     }
     if (layoutHint === 'world' || layoutHint === 'both') {
-      generateLayout('world');
-    }
-  }
-
-  // 每次对话后，只要有 player_update 就重新生成角色状态布局
-  // （因为 current_location/current_status 等字段每次都会变化，布局需要同步更新）
-  if (playerUpdate && Object.keys(playerUpdate).length > 0) {
-    if (!layoutHint || (layoutHint !== 'character' && layoutHint !== 'both')) {
-      const { generateLayout } = useGameStore.getState();
-      generateLayout('character');
-    }
-  }
-
-  // 当世界数据变化时，重新生成世界面板布局
-  if (uiConfig && Object.keys(uiConfig).length > 0) {
-    if (!layoutHint || (layoutHint !== 'world' && layoutHint !== 'both')) {
-      const { generateLayout } = useGameStore.getState();
       generateLayout('world');
     }
   }
