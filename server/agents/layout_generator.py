@@ -91,6 +91,7 @@ class LayoutGenerator:
         uid: str,
         panel_type: str,
         current_data: Dict[str, Any],
+        game_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         生成面板布局
@@ -101,6 +102,7 @@ class LayoutGenerator:
             uid: 玩家唯一标识
             panel_type: 面板类型，"character" 或 "world"
             current_data: 当前角色或世界数据
+            game_context: 游戏上下文信息，包含最近事件、角色记忆、世界记忆、世界快照等
 
         Returns:
             生成结果字典，包含 panel_type、layout、version
@@ -127,7 +129,7 @@ class LayoutGenerator:
                     debug_log("[generate_layout] 无旧布局")
 
             # 2. 构建提示
-            messages = self._build_layout_prompt(panel_type, old_layout, current_data)
+            messages = self._build_layout_prompt(panel_type, old_layout, current_data, game_context)
             debug_log(f"[generate_layout] 构建提示完成: messages数={len(messages)}")
 
             # 3. 调用 LLM
@@ -184,6 +186,7 @@ class LayoutGenerator:
         panel_type: str,
         old_layout: Dict[str, Any],
         current_data: Dict[str, Any],
+        game_context: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, str]]:
         """
         构建布局生成请求的 messages
@@ -192,6 +195,7 @@ class LayoutGenerator:
             panel_type: 面板类型
             old_layout: 旧布局数据
             current_data: 当前角色/世界数据
+            game_context: 游戏上下文信息，包含最近事件、角色记忆、世界记忆、世界快照等
 
         Returns:
             消息列表
@@ -217,6 +221,37 @@ class LayoutGenerator:
             if filtered_data:
                 user_parts.append(f"\n当前数据：\n{json.dumps(filtered_data, ensure_ascii=False, indent=2)}")
 
+        # 游戏上下文信息
+        if game_context:
+            context_parts = []
+
+            # 最近游戏事件
+            recent_events = game_context.get("recent_events")
+            if recent_events:
+                events_text = recent_events if isinstance(recent_events, str) else json.dumps(recent_events, ensure_ascii=False, indent=2)
+                context_parts.append(f"【最近游戏事件】\n{events_text}")
+
+            # 角色记忆
+            character_memories = game_context.get("character_memories")
+            if character_memories:
+                memory_text = character_memories if isinstance(character_memories, str) else json.dumps(character_memories, ensure_ascii=False, indent=2)
+                context_parts.append(f"【角色记忆】\n{memory_text}")
+
+            # 世界记忆
+            world_memories = game_context.get("world_memories")
+            if world_memories:
+                memory_text = world_memories if isinstance(world_memories, str) else json.dumps(world_memories, ensure_ascii=False, indent=2)
+                context_parts.append(f"【世界记忆】\n{memory_text}")
+
+            # 世界快照
+            world_snapshot = game_context.get("world_snapshot")
+            if world_snapshot:
+                context_parts.append(f"【世界快照】\n{json.dumps(world_snapshot, ensure_ascii=False, indent=2)}")
+
+            if context_parts:
+                user_parts.append("\n" + "\n".join(context_parts))
+                debug_log(f"[build_layout_prompt] 添加游戏上下文信息: {len(context_parts)}项")
+
         # 旧布局参考
         if old_layout and old_layout.get("layout"):
             old_layout_html = old_layout["layout"]
@@ -225,6 +260,8 @@ class LayoutGenerator:
 
         # 生成指令
         user_parts.append("\n请根据以上信息生成新的面板 HTML 代码。注意：当前数据中不存在的字段不要在布局中显示，所有动态值通过 JS 从 window.__LAYOUT_DATA__ 读取。")
+        if game_context:
+            user_parts.append("请结合游戏上下文和当前数据，生成最能反映当前游戏状态的面板布局。布局应突出当前最重要的信息，如角色当前状态、所处环境、正在发生的事件等。")
 
         messages.append({"role": "user", "content": "\n".join(user_parts)})
 

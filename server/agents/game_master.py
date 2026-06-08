@@ -228,6 +228,7 @@ class GameMaster:
         session_history: List[Dict[str, str]],
         memory_text: str,
         plot_text: str,
+        req_type: str = "chat",
     ) -> List[Dict[str, str]]:
         """
         拼装 LLM messages 数组
@@ -239,6 +240,7 @@ class GameMaster:
             session_history: 前端本地短时对话历史
             memory_text: 角色&世界历史记忆文本
             plot_text: 相关过往剧情片段文本
+            req_type: 请求类型，"chat" 为普通聊天，"tutorial" 为引导教程
 
         Returns:
             拼装好的 messages 列表
@@ -256,6 +258,39 @@ class GameMaster:
             debug_log(f"[build_messages] Step2 追加session_history: {len(session_history)}条")
         else:
             debug_log("[build_messages] Step2 无session_history")
+
+        # 追加角色档案信息
+        player_data = {}
+        if self.storage:
+            try:
+                player_data = self.storage.couch_get_player(uid)
+            except Exception as e:
+                error_log(f"获取玩家角色数据异常: uid={uid}, 错误: {e}")
+                player_data = {}
+
+        if player_data:
+            character_text = self._format_character_profile(player_data)
+            messages.append({
+                "role": "system",
+                "content": character_text,
+            })
+            debug_log(f"[build_messages] Step2.1 追加角色档案: 长度={len(character_text)}")
+        else:
+            warn_log(f"玩家角色数据为空，跳过角色信息注入: uid={uid}")
+            debug_log("[build_messages] Step2.1 无角色数据，跳过角色信息注入")
+
+        # 引导教程场景提示
+        if req_type == "tutorial":
+            tutorial_prompt = (
+                "当前为新修士引导教程场景，请以引路仙灵的身份，逐步引导新修士了解青墟古域的世界观、"
+                "基本操作、修炼入门之道。语气温和亲切，内容循序渐进，每次回复聚焦一个主题"
+                "（如世界背景、修炼体系、操作指引等），并在末尾提供2-3个引导性建议动作供新修士选择。"
+            )
+            messages.append({
+                "role": "system",
+                "content": tutorial_prompt,
+            })
+            debug_log("[build_messages] Step2.2 追加引导教程场景提示")
 
         # 追加角色编号、当前区域、历史记忆
         memory_section = (
@@ -422,6 +457,7 @@ class GameMaster:
         user_input: str,
         current_area: str,
         session_history: List[Dict[str, str]],
+        req_type: str = "chat",
     ) -> Dict[str, Any]:
         """
         玩家聊天完整串行流程入口（req_type=chat）
@@ -433,6 +469,7 @@ class GameMaster:
             user_input: 用户输入文本
             current_area: 当前区域
             session_history: 前端本地短时对话历史
+            req_type: 请求类型，"chat" 为普通聊天，"tutorial" 为引导教程
 
         Returns:
             {"dialog": ..., "player_update": ..., "ui_config": ...}
@@ -455,6 +492,7 @@ class GameMaster:
                 session_history=session_history,
                 memory_text=memory_text,
                 plot_text=plot_text,
+                req_type=req_type,
             )
             debug_log(f"[handle_chat] Step2 消息拼装完成: messages数={len(messages)}")
 
@@ -565,6 +603,127 @@ class GameMaster:
     # ================================================================
     # 辅助方法
     # ================================================================
+
+    # 角色档案格式化时的已知字段列表（按展示顺序排列）
+    _KNOWN_PROFILE_FIELDS = [
+        "name", "realm", "realm_stage", "level",
+        "health", "max_health", "mana", "max_mana",
+        "spirit", "max_spirit",
+        "current_location", "current_status", "clothing",
+        "birth_date", "lifespan",
+        "equipment", "inventory",
+    ]
+
+    # 字段中文标签映射
+    _PROFILE_LABEL_MAP = {
+        "name": "姓名",
+        "realm": "境界",
+        "realm_stage": "境界阶段",
+        "level": "等级",
+        "health": "生命",
+        "max_health": "最大生命",
+        "mana": "法力",
+        "max_mana": "最大法力",
+        "spirit": "神识",
+        "max_spirit": "最大神识",
+        "current_location": "当前位置",
+        "current_status": "当前状态",
+        "clothing": "衣着",
+        "birth_date": "出生日期",
+        "lifespan": "寿元",
+        "equipment": "装备",
+        "inventory": "背包",
+    }
+
+    # 需要排除的 CouchDB 内部字段
+    _EXCLUDED_FIELDS = {"_id", "_rev"}
+
+    def _format_character_profile(self, player_data: Dict[str, Any]) -> str:
+        """
+        将玩家数据格式化为角色档案结构化文本
+
+        Args:
+            player_data: 玩家数据字典
+
+        Returns:
+            格式化后的角色档案文本
+        """
+        lines = ["【角色档案】"]
+
+        # 已知字段按顺序输出
+        for field in self._KNOWN_PROFILE_FIELDS:
+            value = player_data.get(field)
+            if value is None or value == "" or value == []:
+                continue
+
+            label = self._PROFILE_LABEL_MAP.get(field, field)
+
+            if field == "equipment" and isinstance(value, list):
+                # 提取每个元素的 name 字段，用逗号连接
+                names = [item.get("name", str(item)) for item in value if isinstance(item, dict)]
+                if not names:
+                    names = [str(item) for item in value]
+                lines.append(f"{label}：{', '.join(names) if names else '无'}")
+            elif field == "inventory" and isinstance(value, list):
+                # 提取每个元素的 name 和 quantity，格式如"灵石x10, 丹药x3"
+                inv_parts = []
+                for item in value:
+                    if isinstance(item, dict):
+                        item_name = item.get("name", str(item))
+                        quantity = item.get("quantity")
+                        if quantity is not None:
+                            inv_parts.append(f"{item_name}x{quantity}")
+                        else:
+                            inv_parts.append(item_name)
+                    else:
+                        inv_parts.append(str(item))
+                lines.append(f"{label}：{', '.join(inv_parts) if inv_parts else '空'}")
+            elif field in ("health", "max_health"):
+                # 生命值合并为一行
+                if field == "health":
+                    max_val = player_data.get("max_health")
+                    if max_val is not None:
+                        lines.append(f"生命：{value}/{max_val}")
+                    else:
+                        lines.append(f"生命：{value}")
+            elif field in ("mana", "max_mana"):
+                if field == "mana":
+                    max_val = player_data.get("max_mana")
+                    if max_val is not None:
+                        lines.append(f"法力：{value}/{max_val}")
+                    else:
+                        lines.append(f"法力：{value}")
+            elif field in ("spirit", "max_spirit"):
+                if field == "spirit":
+                    max_val = player_data.get("max_spirit")
+                    if max_val is not None:
+                        lines.append(f"神识：{value}/{max_val}")
+                    else:
+                        lines.append(f"神识：{value}")
+            elif field in ("max_health", "max_mana", "max_spirit"):
+                # 已在 health/mana/spirit 中合并输出，跳过
+                continue
+            else:
+                lines.append(f"{label}：{value}")
+
+        # 收集已知字段名，用于后续排除
+        known_set = set(self._KNOWN_PROFILE_FIELDS) | {"max_health", "max_mana", "max_spirit"}
+
+        # 输出其他自定义字段
+        for key, value in player_data.items():
+            if key in self._EXCLUDED_FIELDS:
+                continue
+            if key in known_set:
+                continue
+            if value is None or value == "" or value == []:
+                continue
+            # 自定义字段直接用 key 作为标签
+            if isinstance(value, (list, dict)):
+                lines.append(f"{key}：{json.dumps(value, ensure_ascii=False)}")
+            else:
+                lines.append(f"{key}：{value}")
+
+        return "\n".join(lines)
 
     def _convert_messages(self, messages: List[Dict[str, str]]) -> List:
         """
@@ -860,6 +1019,7 @@ class GameMaster:
         user_input: str,
         current_area: str,
         session_history: List[Dict[str, str]],
+        req_type: str = "chat",
     ) -> Generator[str, None, None]:
         """
         玩家聊天流式串行流程入口（req_type=chat, stream=True）
@@ -871,6 +1031,7 @@ class GameMaster:
             user_input: 用户输入文本
             current_area: 当前区域
             session_history: 前端本地短时对话历史
+            req_type: 请求类型，"chat" 为普通聊天，"tutorial" 为引导教程
 
         Yields:
             SSE 格式的事件字符串
@@ -893,6 +1054,7 @@ class GameMaster:
                 session_history=session_history,
                 memory_text=memory_text,
                 plot_text=plot_text,
+                req_type=req_type,
             )
             debug_log(f"[handle_chat_stream] Step2 消息拼装完成: messages数={len(messages)}")
 

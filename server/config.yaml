@@ -41,10 +41,16 @@ world_model:
 
 # 布局生成模型（Qwen3-Coder-Next-Q4，用于动态生成面板布局）
 layout_model:
-  api_base: http://localhost:7777/v1
+  api_base: http://localhost:7778/v1
   api_key: not-needed
-  model_name: Qwen3-Coder-Next-Q4
+  model_name: Qwen3.6-35B-A3B
   temperature: 0.3
+  max_tokens: 4096
+
+embedding_model:
+  api_base: http://localhost:8888/v1
+  api_key: not-needed
+  model_name: Qwen3.6-embedding-0.6B
   max_tokens: 4096
 
 # CouchDB 配置

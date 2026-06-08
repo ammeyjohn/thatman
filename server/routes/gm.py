@@ -500,7 +500,71 @@ def generate_layout():
 
         info_log(f"生成布局请求: uid={uid}, panel_type={panel_type}")
 
-        result = layout_gen.generate_layout(uid, panel_type, current_data)
+        # 获取最近游戏事件
+        recent_events = []
+        try:
+            chat_docs = storage.get_chat_history(uid, limit=10)
+            for doc in chat_docs:
+                if isinstance(doc, dict) and doc.get("sender") == "npc":
+                    content = doc.get("content", "")
+                    if content and len(content) > 20:
+                        # 截取前100字作为摘要
+                        recent_events.append(content[:100])
+            # 只保留最近5条
+            recent_events = recent_events[-5:]
+        except Exception as e:
+            error_log(f"获取聊天历史失败: {e}")
+
+        # 获取记忆
+        memory_text = ""
+        try:
+            memory_text = storage.recall_all_memory(uid, "角色状态 世界事件")
+        except Exception as e:
+            error_log(f"获取记忆失败: {e}")
+
+        # 获取世界快照
+        world_snapshot = {}
+        try:
+            world_snapshot = storage.couch_get_last_world_snap()
+            world_snapshot.pop("_id", None)
+            world_snapshot.pop("_rev", None)
+        except Exception as e:
+            error_log(f"获取世界快照失败: {e}")
+
+        # 构建游戏上下文
+        game_context = {}
+        if recent_events:
+            game_context["recent_events"] = recent_events
+        if memory_text:
+            # 尝试拆分个人记忆和世界记忆
+            char_memories = ""
+            world_memories = ""
+            if "【个人记忆】" in memory_text and "【世界记忆】" in memory_text:
+                char_part = memory_text.split("【世界记忆】")[0]
+                world_part = memory_text.split("【世界记忆】")[1]
+                # 去掉【个人记忆】标记
+                char_memories = char_part.replace("【个人记忆】", "").strip()
+                world_memories = world_part.strip()
+            elif "【个人记忆】" in memory_text:
+                char_memories = memory_text.replace("【个人记忆】", "").strip()
+            elif "【世界记忆】" in memory_text:
+                world_memories = memory_text.replace("【世界记忆】", "").strip()
+            else:
+                char_memories = memory_text
+
+            if char_memories:
+                game_context["character_memories"] = char_memories
+            if world_memories:
+                game_context["world_memories"] = world_memories
+        if world_snapshot:
+            game_context["world_snapshot"] = world_snapshot
+
+        debug_log(f"游戏上下文: recent_events={len(recent_events)}, "
+                  f"has_character_memories={'character_memories' in game_context}, "
+                  f"has_world_memories={'world_memories' in game_context}, "
+                  f"has_world_snapshot={'world_snapshot' in game_context}")
+
+        result = layout_gen.generate_layout(uid, panel_type, current_data, game_context=game_context)
 
         return jsonify(result)
 
@@ -580,19 +644,24 @@ def gm_tutorial():
     GM 引导教程接口
 
     为新玩家提供初始引导，调用 GameMaster 生成引导剧情。
+    支持 stream 参数，当 stream=true 时以 SSE 格式流式返回。
 
     请求格式（JSON POST）:
     {
-        "uid": "string(玩家唯一ID)"
+        "uid": "string(玩家唯一ID)",
+        "stream": false
     }
 
-    响应格式:
+    响应格式（非流式）:
     {
         "dialog": "引导对话文本",
         "actions": [],
         "player_update": {},
         "ui_config": {"left_open":[],"right_open":[]}
     }
+
+    响应格式（流式 stream=true）:
+    SSE 事件流，格式与 /gm/chat 流式响应一致
     """
     data = request.get_json()
 
@@ -606,6 +675,7 @@ def gm_tutorial():
         }), 400
 
     uid = data.get('uid', '')
+    stream = data.get('stream', False)
 
     if not uid:
         return jsonify({
@@ -623,53 +693,117 @@ def gm_tutorial():
         # 固定的引导 prompt
         tutorial_prompt = "新修士初入青墟古域，请作为引路仙灵，为这位新修士介绍青墟古域的世界观、基本生存法则、修炼入门之道，并描述其初始场景。"
 
-        # 调用 GM 处理引导请求
-        info_log(f"处理引导教程请求 - uid={uid}")
-        result = gm.handle_chat(uid, tutorial_prompt, "青墟古域·云溪村", [])
+        if stream:
+            # 流式引导教程
+            info_log(f"处理流式引导教程请求 - uid={uid}")
 
-        # 返回标准 GM 响应格式
-        response_data = {
-            'dialog': result.get('dialog', ''),
-            'actions': result.get('actions', []),
-            'player_update': result.get('player_update', {}),
-            'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
-        }
+            def generate_tutorial_stream():
+                dialog_text = ""
+                result_data = {}
+                for sse_event in gm.handle_chat_stream(
+                    uid, tutorial_prompt, "青墟古域·云溪村", [], req_type="tutorial"
+                ):
+                    yield sse_event
+                    # 捕获 dialog_delta 和 result 事件
+                    if sse_event.startswith("event: dialog_delta"):
+                        for line in sse_event.split("\n"):
+                            if line.startswith("data: "):
+                                try:
+                                    delta = json.loads(line[6:])
+                                    dialog_text += delta.get("content", "")
+                                except json.JSONDecodeError:
+                                    pass
+                    elif sse_event.startswith("event: result"):
+                        for line in sse_event.split("\n"):
+                            if line.startswith("data: "):
+                                try:
+                                    result_data = json.loads(line[6:])
+                                except json.JSONDecodeError:
+                                    pass
 
-        # 将玩家数据的 is_new 标记更新为 False
-        try:
-            player_data = storage.couch_get_player(uid)
-            if player_data and player_data.get("is_new") is True:
-                player_data["is_new"] = False
-                storage.couch_save_player(uid, player_data)
-                info_log(f"引导教程完成，已更新玩家 is_new 标记: uid={uid}")
-        except Exception as e:
-            error_log(f"更新玩家 is_new 标记失败: uid={uid}, 错误: {e}")
+                # 流式结束后更新 is_new 标记
+                try:
+                    player_data = storage.couch_get_player(uid)
+                    if player_data and player_data.get("is_new") is True:
+                        player_data["is_new"] = False
+                        storage.couch_save_player(uid, player_data)
+                        info_log(f"流式引导教程完成，已更新玩家 is_new 标记: uid={uid}")
+                except Exception as e:
+                    error_log(f"更新玩家 is_new 标记失败: uid={uid}, 错误: {e}")
 
-        # 保存引导消息到聊天历史
-        try:
-            now_ms = int(time_module.time() * 1000)
-            # 保存用户引导请求
-            storage.save_chat_message(
-                uid=uid,
-                sender="player",
-                content=tutorial_prompt,
-                timestamp=now_ms,
-            )
-            # 保存 GM 引导回复
-            storage.save_chat_message(
-                uid=uid,
-                sender="npc",
-                content=response_data.get('dialog', ''),
-                timestamp=now_ms + 1,
-                actions=response_data.get('actions'),
-                player_update=response_data.get('player_update'),
-                ui_config=response_data.get('ui_config'),
-            )
-        except Exception as e:
-            error_log(f"保存引导教程聊天消息失败: {e}")
+                # 保存引导消息到聊天历史
+                try:
+                    now_ms = int(time_module.time() * 1000)
+                    storage.save_chat_message(
+                        uid=uid,
+                        sender="player",
+                        content=tutorial_prompt,
+                        timestamp=now_ms,
+                    )
+                    storage.save_chat_message(
+                        uid=uid,
+                        sender="npc",
+                        content=result_data.get('dialog', dialog_text),
+                        timestamp=now_ms + 1,
+                        actions=result_data.get('actions'),
+                        player_update=result_data.get('player_update'),
+                        ui_config=result_data.get('ui_config'),
+                    )
+                except Exception as e:
+                    error_log(f"流式保存引导教程聊天消息失败: {e}")
 
-        debug_log(f"引导教程响应: {json.dumps(response_data, ensure_ascii=False)}")
-        return jsonify(response_data)
+            return Response(generate_tutorial_stream(), mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no',
+                              'Connection': 'keep-alive',
+                          })
+        else:
+            # 非流式引导教程（向后兼容）
+            info_log(f"处理引导教程请求 - uid={uid}")
+            result = gm.handle_chat(uid, tutorial_prompt, "青墟古域·云溪村", [], req_type="tutorial")
+
+            # 返回标准 GM 响应格式
+            response_data = {
+                'dialog': result.get('dialog', ''),
+                'actions': result.get('actions', []),
+                'player_update': result.get('player_update', {}),
+                'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
+            }
+
+            # 将玩家数据的 is_new 标记更新为 False
+            try:
+                player_data = storage.couch_get_player(uid)
+                if player_data and player_data.get("is_new") is True:
+                    player_data["is_new"] = False
+                    storage.couch_save_player(uid, player_data)
+                    info_log(f"引导教程完成，已更新玩家 is_new 标记: uid={uid}")
+            except Exception as e:
+                error_log(f"更新玩家 is_new 标记失败: uid={uid}, 错误: {e}")
+
+            # 保存引导消息到聊天历史
+            try:
+                now_ms = int(time_module.time() * 1000)
+                storage.save_chat_message(
+                    uid=uid,
+                    sender="player",
+                    content=tutorial_prompt,
+                    timestamp=now_ms,
+                )
+                storage.save_chat_message(
+                    uid=uid,
+                    sender="npc",
+                    content=response_data.get('dialog', ''),
+                    timestamp=now_ms + 1,
+                    actions=response_data.get('actions'),
+                    player_update=response_data.get('player_update'),
+                    ui_config=response_data.get('ui_config'),
+                )
+            except Exception as e:
+                error_log(f"保存引导教程聊天消息失败: {e}")
+
+            debug_log(f"引导教程响应: {json.dumps(response_data, ensure_ascii=False)}")
+            return jsonify(response_data)
 
     except Exception as e:
         error_log(f"处理引导教程请求时出错: {e}")

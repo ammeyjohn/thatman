@@ -10,10 +10,13 @@ interface GameState {
   updateWorld: (updates: Partial<WorldState>) => void;
   characterLayout: string | null;
   worldLayout: string | null;
+  isGeneratingCharacterLayout: boolean;
+  isGeneratingWorldLayout: boolean;
   setCharacterLayout: (layout: string | null) => void;
   setWorldLayout: (layout: string | null) => void;
   loadLayout: (panelType: 'character' | 'world') => Promise<void>;
   generateLayout: (panelType: 'character' | 'world') => Promise<void>;
+  regenerateLayout: (panelType: 'character' | 'world') => Promise<void>;
   loadUserInfo: () => Promise<void>;
 }
 
@@ -76,6 +79,8 @@ export const useGameStore = create<GameState>((set) => ({
   world: initialWorld,
   characterLayout: null,
   worldLayout: null,
+  isGeneratingCharacterLayout: false,
+  isGeneratingWorldLayout: false,
   updateCharacter: (updates) =>
     set((state) => ({
       character: { ...state.character, ...updates },
@@ -123,6 +128,13 @@ export const useGameStore = create<GameState>((set) => ({
     const uid = getOrCreateUserId();
     if (!uid) return;
 
+    // 设置生成状态
+    if (panelType === 'character') {
+      set({ isGeneratingCharacterLayout: true });
+    } else {
+      set({ isGeneratingWorldLayout: true });
+    }
+
     try {
       const gameState = useGameStore.getState();
       const currentData = panelType === 'character' ? gameState.character : gameState.world;
@@ -153,6 +165,13 @@ export const useGameStore = create<GameState>((set) => ({
       }
     } catch (error) {
       console.error('生成布局失败:', error);
+    } finally {
+      // 清除生成状态
+      if (panelType === 'character') {
+        set({ isGeneratingCharacterLayout: false });
+      } else {
+        set({ isGeneratingWorldLayout: false });
+      }
     }
   },
 
@@ -230,8 +249,32 @@ export const useGameStore = create<GameState>((set) => ({
       const { loadLayout } = useGameStore.getState();
       loadLayout('character');
       loadLayout('world');
+
+      // 延迟检查布局是否生成成功，如果未成功则重试
+      setTimeout(() => {
+        const state = useGameStore.getState();
+        if (!state.characterLayout) {
+          console.log('[Layout] 角色布局未生成，尝试重新生成');
+          state.generateLayout('character');
+        }
+        if (!state.worldLayout) {
+          console.log('[Layout] 世界布局未生成，尝试重新生成');
+          state.generateLayout('world');
+        }
+      }, 3000);
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
+  },
+
+  regenerateLayout: async (panelType) => {
+    // 清除现有布局，强制重新生成
+    if (panelType === 'character') {
+      set({ characterLayout: null });
+    } else {
+      set({ worldLayout: null });
+    }
+    const { generateLayout } = useGameStore.getState();
+    await generateLayout(panelType);
   },
 }));

@@ -16,12 +16,30 @@ export function CharacterPanel() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const scriptsRef = useRef<string[]>([]);
 
-  // 注入实时数据到 window.__LAYOUT_DATA__，供 HTML 布局中的 JS 读取
+  // 注入实时数据并执行布局中的脚本
   React.useEffect(() => {
-    if (characterLayout) {
-      (window as any).__LAYOUT_DATA__ = character;
+    if (!characterLayout || !layoutRef.current) return;
+
+    const container = layoutRef.current;
+
+    // 提取并缓存脚本内容（布局变化时）
+    const scripts = container.querySelectorAll('script');
+    if (scripts.length > 0) {
+      scriptsRef.current = Array.from(scripts).map(s => s.textContent || '');
+      scripts.forEach(s => s.remove());
     }
+
+    // 设置数据上下文并执行脚本
+    (window as any).__LAYOUT_DATA__ = character;
+    scriptsRef.current.forEach(content => {
+      const script = document.createElement('script');
+      script.textContent = content;
+      container.appendChild(script);
+      script.remove();
+    });
   }, [character, characterLayout]);
 
   // 点击外部关闭菜单
@@ -108,7 +126,7 @@ export function CharacterPanel() {
               </h3>
             </div>
             {/* 注入实时数据并渲染 HTML 布局 */}
-            <div dangerouslySetInnerHTML={{ __html: characterLayout }} />
+            <div ref={layoutRef} dangerouslySetInnerHTML={{ __html: characterLayout }} />
           </>
         ) : (
           // 原有硬编码渲染（保持不变）

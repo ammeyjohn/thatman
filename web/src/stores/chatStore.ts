@@ -143,7 +143,7 @@ async function streamGmChat(
 /**
  * 处理 GM 响应中的 player_update 和 ui_config，更新 gameStore
  */
-function applyGmResponseToGameStore(
+export function applyGmResponseToGameStore(
   playerUpdate: Record<string, unknown>,
   uiConfig: Record<string, unknown>,
 ) {
@@ -202,6 +202,28 @@ function applyGmResponseToGameStore(
       generateLayout('character');
     }
     if (layoutHint === 'world' || layoutHint === 'both') {
+      generateLayout('world');
+    }
+  }
+
+  // 当角色数据发生重大变化时，自动触发布局生成
+  if (playerUpdate && Object.keys(playerUpdate).length > 0) {
+    const significantFields = ['realm', 'realm_stage', 'level', 'current_location', 'current_status', 'name'];
+    const hasSignificantChange = significantFields.some(field => playerUpdate[field] !== undefined);
+
+    if (hasSignificantChange && !layoutHint) {
+      const { generateLayout } = useGameStore.getState();
+      generateLayout('character');
+    }
+  }
+
+  // 当世界数据变化时，自动触发世界面板布局生成
+  if (uiConfig && Object.keys(uiConfig).length > 0) {
+    const worldSignificantFields = ['location', 'time', 'weather'];
+    const hasWorldChange = worldSignificantFields.some(field => uiConfig[field] !== undefined);
+
+    if (hasWorldChange && layoutHint !== 'world' && layoutHint !== 'both') {
+      const { generateLayout } = useGameStore.getState();
       generateLayout('world');
     }
   }

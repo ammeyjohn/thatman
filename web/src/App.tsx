@@ -3,7 +3,7 @@ import { CharacterPanel } from './components/CharacterPanel';
 import { WorldEventPanel } from './components/WorldEventPanel';
 import { ChatArea } from './components/ChatArea';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useChatStore } from './stores/chatStore';
+import { useChatStore, applyGmResponseToGameStore } from './stores/chatStore';
 import { useGameStore } from './stores/gameStore';
 import { config } from './config';
 
@@ -40,41 +40,107 @@ function App() {
     loadInitialData();
   }, []);
 
-  // 新用户 GM 引导教程
+  // 新用户 GM 引导教程（流式）
   const triggerTutorialIfNeeded = async () => {
     const TUTORIAL_SHOWN_KEY = 'thatman_tutorial_shown';
     const userStr = localStorage.getItem('thatman_user');
 
     if (!userStr) return;
 
-    // 检查是否已经展示过教程
     try {
       const user = JSON.parse(userStr);
       const tutorialKey = `${TUTORIAL_SHOWN_KEY}_${user.uid}`;
       if (localStorage.getItem(tutorialKey)) return;
 
-      // 调用引导教程接口
+      // 调用流式引导教程接口
       const response = await fetch(`${config.API_BASE_URL}/gm/tutorial`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: user.uid }),
+        body: JSON.stringify({ uid: user.uid, stream: true }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.dialog) {
-          // 以系统消息形式展示引导内容
-          const { addMessage } = useChatStore.getState();
-          addMessage({
-            sender: 'system',
-            senderName: '引路仙灵',
-            content: data.dialog,
-            type: 'system',
-          });
+      if (!response.ok) return;
+
+      const reader = response.body?.getReader();
+      if (!reader) return;
+
+      // 添加一条空的系统消息，用于流式更新
+      const { addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON } = useChatStore.getState();
+      addMessage({
+        sender: 'system',
+        senderName: '引路仙灵',
+        content: '',
+        type: 'system',
+      });
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullContent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6);
+            try {
+              const data = JSON.parse(dataStr);
+
+              switch (currentEvent) {
+                case 'dialog_delta':
+                  fullContent += data.content || '';
+                  updateLastMessage(fullContent);
+                  break;
+                case 'result': {
+                  // 更新 actions
+                  const actions = Array.isArray(data.actions)
+                    ? data.actions.filter((a: unknown): a is string => typeof a === 'string')
+                    : [];
+                  if (actions.length > 0) {
+                    updateLastMessageActions(actions);
+                  }
+                  updateLastMessageParsedJSON(data as Record<string, unknown>);
+                  updateLastMessageRawJSON(JSON.stringify(data, null, 2));
+
+                  // 更新 gameStore
+                  applyGmResponseToGameStore(data.player_update || {}, data.ui_config || {});
+                  break;
+                }
+                case 'error':
+                  console.error('引导教程流式错误:', data.message);
+                  break;
+                case 'done':
+                  break;
+              }
+            } catch {
+              // 忽略解析错误
+            }
+            currentEvent = '';
+          }
         }
-        // 标记教程已展示
-        localStorage.setItem(tutorialKey, 'true');
       }
+
+      // 如果没有收到任何内容，移除空消息
+      if (!fullContent) {
+        const store = useChatStore.getState();
+        const msgs = store.messages;
+        if (msgs.length > 0 && msgs[msgs.length - 1].content === '' && msgs[msgs.length - 1].sender === 'system') {
+          // 通过设置 messages 来移除最后一条空消息
+          useChatStore.setState({ messages: msgs.slice(0, -1) });
+        }
+      }
+
+      // 标记教程已展示
+      localStorage.setItem(tutorialKey, 'true');
     } catch (error) {
       console.error('引导教程加载失败:', error);
     }

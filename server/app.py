@@ -81,8 +81,11 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app()
+    # 禁用 reloader：fork 会复制 torch/MPS 资源到子进程，
+    # 子进程退出时释放未分配的指针导致 malloc 崩溃
     app.run(
         host='0.0.0.0',
         port=Config.FLASK_PORT,
-        debug=Config.FLASK_DEBUG
+        debug=Config.FLASK_DEBUG,
+        use_reloader=False,
     )
