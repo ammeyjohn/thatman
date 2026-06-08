@@ -70,6 +70,7 @@ interface GameState {
   disconnectWorldTimeSSE: () => void;
   fetchWorldTime: () => Promise<void>;
   fetchInventory: () => Promise<void>;
+  fetchEquipment: () => Promise<void>;
   // 时间同步内部状态和方法
   _worldTimeTickInterval: number | null;
   _worldTimePollInterval: number | null;
@@ -495,6 +496,35 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (error) {
       console.error('获取背包信息失败:', error);
+    }
+  },
+
+  fetchEquipment: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/v1/gm/equipment?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取装备信息失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      const charUpdates: Partial<CharacterState> = {};
+      if (Array.isArray(data.equipment)) charUpdates.equipment = data.equipment;
+      if (typeof data.clothing === 'string') charUpdates.clothing = data.clothing;
+
+      if (Object.keys(charUpdates).length > 0) {
+        set((state) => ({
+          character: { ...state.character, ...charUpdates },
+        }));
+        console.log('[Equipment] 装备信息加载成功');
+      }
+    } catch (error) {
+      console.error('获取装备信息失败:', error);
     }
   },
 

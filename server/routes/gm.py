@@ -1089,3 +1089,77 @@ def get_inventory():
                 'code': 'internal_error'
             }
         }), 500
+
+
+@gm_bp.route('/gm/equipment', methods=['GET'])
+def get_equipment():
+    """
+    查询玩家装备与服饰
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    请求头:
+        Authorization: Bearer <token>（必填）
+
+    响应格式:
+    {
+        "uid": "user_123_abc",
+        "equipment": [...],
+        "clothing": ""
+    }
+    """
+    # 验证 Bearer token
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    token = auth_header[7:]  # 去掉 "Bearer " 前缀
+    payload = _verify_token(token)
+    if not payload:
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    # 验证 uid 参数
+    uid = request.args.get('uid', '')
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        player_data = storage.couch_get_player(uid)
+
+        equipment = player_data.get('equipment', []) if player_data else []
+        clothing = player_data.get('clothing', '') if player_data else ''
+
+        return jsonify({
+            'uid': uid,
+            'equipment': equipment,
+            'clothing': clothing,
+        })
+    except Exception as e:
+        error_log(f"获取玩家装备失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500

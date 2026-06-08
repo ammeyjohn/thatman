@@ -2,14 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate } from 'react-router-dom';
-import { StatusBar } from './StatusBar';
-import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
-
-const equipmentIcons: Record<string, React.ReactNode> = {
-  sword: <Sword className="w-4 h-4" />,
-  shield: <Shield className="w-4 h-4" />,
-  circle: <Circle className="w-4 h-4" />,
-};
+import { Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
 
 export function CharacterPanel() {
   const { character, characterLayout } = useGameStore();
