@@ -61,6 +61,52 @@ const initialStreamStats: StreamStats = {
 };
 
 /**
+ * 解析历史记录中的 content，如果 content 是 JSON 字符串则提取 dialog/actions 等字段
+ */
+function parseHistoryDoc(doc: Record<string, unknown>): ChatMessage {
+  const baseMessage: ChatMessage = {
+    id: (doc._id as string) || generateId(),
+    sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
+    content: (doc.content as string) || '',
+    timestamp: (doc.timestamp as number) || Date.now(),
+    type: 'normal' as const,
+    gameDate: (doc.game_date as string) || undefined,
+    gameShichen: (doc.game_shichen as string) || undefined,
+    location: (doc.location as string) || undefined,
+  };
+
+  // 尝试解析 content 中的 JSON
+  if (typeof doc.content === 'string') {
+    const trimmed = doc.content.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed.dialog === 'string') {
+          baseMessage.content = parsed.dialog;
+          if (Array.isArray(parsed.actions)) {
+            baseMessage.actions = parsed.actions.filter((a: unknown): a is string => typeof a === 'string');
+          }
+          baseMessage.parsedJSON = parsed;
+          baseMessage.rawJSON = doc.content;
+          console.log('[parseHistoryDoc] 解析 JSON 成功，id:', baseMessage.id, 'dialog 长度:', parsed.dialog.length);
+        }
+      } catch {
+        console.warn('[parseHistoryDoc] JSON 解析失败，id:', baseMessage.id, 'content 前50字符:', trimmed.slice(0, 50));
+      }
+    } else {
+      console.log('[parseHistoryDoc] 无需解析，id:', baseMessage.id, 'content 前50字符:', trimmed.slice(0, 50));
+    }
+  }
+
+  // 如果数据库中已有独立的 actions 字段，也保留
+  if (!baseMessage.actions && Array.isArray(doc.actions)) {
+    baseMessage.actions = doc.actions as string[];
+  }
+
+  return baseMessage;
+}
+
+/**
  * 流式调用 /gm/chat 接口，通过 SSE 逐步接收 GM 响应
  */
 async function streamGmChat(
@@ -516,18 +562,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // 将数据库记录转换为 ChatMessage 格式
-      const messages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
-        id: (doc._id as string) || generateId(),
-        sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
-        content: (doc.content as string) || '',
-        timestamp: (doc.timestamp as number) || Date.now(),
-        type: 'normal' as const,
-        actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
-        parsedJSON: doc.player_update || doc.ui_config ? {
-          player_update: doc.player_update,
-          ui_config: doc.ui_config,
-        } : undefined,
-      }));
+      const messages: ChatMessage[] = docs.map(parseHistoryDoc);
+
+      // 调试：输出第一条消息的转换结果
+      if (messages.length > 0) {
+        const first = messages[0];
+        console.log('[ChatHistory] 第一条消息 id:', first.id, 'sender:', first.sender, 'content 前50字符:', first.content?.slice(0, 50), 'rawJSON 是否存在:', !!first.rawJSON);
+      }
 
       // 记录最早的时间戳（用于下次分页加载）
       const earliestTimestamp = docs.length > 0 ? (docs[0].timestamp as number) : null;
@@ -574,18 +615,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // 将数据库记录转换为 ChatMessage 格式
-      const newMessages: ChatMessage[] = docs.map((doc: Record<string, unknown>) => ({
-        id: (doc._id as string) || generateId(),
-        sender: (doc.sender as 'player' | 'npc' | 'system') || 'system',
-        content: (doc.content as string) || '',
-        timestamp: (doc.timestamp as number) || Date.now(),
-        type: 'normal' as const,
-        actions: Array.isArray(doc.actions) ? doc.actions as string[] : undefined,
-        parsedJSON: doc.player_update || doc.ui_config ? {
-          player_update: doc.player_update,
-          ui_config: doc.ui_config,
-        } : undefined,
-      }));
+      const newMessages: ChatMessage[] = docs.map(parseHistoryDoc);
 
       const newEarliestTimestamp = docs.length > 0 ? (docs[0].timestamp as number) : earliestTimestamp;
 

@@ -14,6 +14,7 @@ from game_master import GameMaster
 from gm_logger import debug_log, info_log, error_log
 from layout_generator import LayoutGenerator, get_layout_generator
 from world_time_service import WorldTimeService, set_world_time_service
+from routes.auth import _verify_token
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -1005,6 +1006,82 @@ def world_time_sse():
                       })
     except Exception as e:
         error_log(f"世界时间 SSE 订阅失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/inventory', methods=['GET'])
+def get_inventory():
+    """
+    查询玩家背包/物品栏
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    请求头:
+        Authorization: Bearer <token>（必填）
+
+    响应格式:
+    {
+        "uid": "user_123_abc",
+        "inventory": [
+            {"id": "item1", "name": "灵石", "type": "currency", "description": "修仙界通用货币", "quantity": 100}
+        ]
+    }
+    """
+    # 验证 Bearer token
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    token = auth_header[7:]  # 去掉 "Bearer " 前缀
+    payload = _verify_token(token)
+    if not payload:
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    # 验证 uid 参数
+    uid = request.args.get('uid', '')
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        player_data = storage.couch_get_player(uid)
+
+        # 玩家不存在或 inventory 字段缺失时返回空数组
+        inventory = []
+        if player_data and 'inventory' in player_data:
+            inventory = player_data['inventory']
+
+        return jsonify({
+            'uid': uid,
+            'inventory': inventory,
+        })
+    except Exception as e:
+        error_log(f"获取玩家背包失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

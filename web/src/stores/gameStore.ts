@@ -69,6 +69,7 @@ interface GameState {
   connectWorldTimeSSE: () => void;
   disconnectWorldTimeSSE: () => void;
   fetchWorldTime: () => Promise<void>;
+  fetchInventory: () => Promise<void>;
   // 时间同步内部状态和方法
   _worldTimeTickInterval: number | null;
   _worldTimePollInterval: number | null;
@@ -469,6 +470,31 @@ export const useGameStore = create<GameState>((set, get) => ({
       }, 3000);
     } catch (error) {
       console.error('加载用户信息失败:', error);
+    }
+  },
+
+  fetchInventory: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/v1/gm/inventory?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取背包信息失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.inventory)) {
+        set((state) => ({
+          character: { ...state.character, inventory: data.inventory },
+        }));
+        console.log('[Inventory] 背包信息加载成功');
+      }
+    } catch (error) {
+      console.error('获取背包信息失败:', error);
     }
   },
 

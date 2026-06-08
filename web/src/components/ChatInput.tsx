@@ -1,17 +1,21 @@
 import { useState, useRef } from 'react';
 import { Send, Square } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
+import { useGameStore } from '../stores/gameStore';
+import { BackpackDialog } from './BackpackDialog';
 
 const quickActions = [
   { label: '修炼', icon: '✨', command: '开始修炼' },
   { label: '探索', icon: '🔍', command: '探索周围' },
   { label: '对话', icon: '💬', command: '与村长对话' },
-  { label: '背包', icon: '🎒', command: '查看背包' },
+  { label: '背包', icon: '🎒', command: '__backpack__' },
 ];
 
 export function ChatInput() {
   const { inputValue, setInputValue, sendMessage, isLoading, stopGeneration, streamStats } = useChatStore();
+  const { fetchInventory } = useGameStore();
   const [isFocused, setIsFocused] = useState(false);
+  const [backpackOpen, setBackpackOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = async () => {
@@ -29,7 +33,12 @@ export function ChatInput() {
     }
   };
 
-  const handleQuickAction = (command: string) => {
+  const handleQuickAction = async (command: string) => {
+    if (command === '__backpack__') {
+      await fetchInventory();
+      setBackpackOpen(true);
+      return;
+    }
     setInputValue(command);
     textareaRef.current?.focus();
   };
@@ -114,6 +123,8 @@ export function ChatInput() {
           <span>{streamStats.tokensPerSecond.toFixed(1)} t/s</span>
         </div>
       )}
+
+      <BackpackDialog open={backpackOpen} onClose={() => setBackpackOpen(false)} />
     </div>
   );
 }

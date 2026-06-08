@@ -3,7 +3,7 @@ import { useGameStore } from '../stores/gameStore';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate } from 'react-router-dom';
 import { StatusBar } from './StatusBar';
-import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, Package, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
+import { Sword, Shield, Circle, Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
 
 const equipmentIcons: Record<string, React.ReactNode> = {
   sword: <Sword className="w-4 h-4" />,
@@ -215,28 +215,6 @@ export function CharacterPanel() {
                 <p className="text-[#e8e4dc] text-sm pl-6" style={{ fontFamily: 'Noto Serif SC, serif' }}>
                   {character.clothing}
                 </p>
-              </div>
-            )}
-
-            {/* Inventory */}
-            {character.inventory && character.inventory.length > 0 && (
-              <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
-                <div className="flex items-center gap-2 mb-1">
-                  <Package className="w-4 h-4 text-[#ffab40]" />
-                  <span className="text-[#ffab40] text-xs font-medium">随身物品</span>
-                </div>
-                <div className="pl-6 space-y-1">
-                  {character.inventory.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between">
-                      <span className="text-[#e8e4dc] text-sm" style={{ fontFamily: 'Noto Serif SC, serif' }}>
-                        {item.name}
-                      </span>
-                      {item.quantity > 1 && (
-                        <span className="text-[#5a7a7a] text-xs">x{item.quantity}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
           </>
