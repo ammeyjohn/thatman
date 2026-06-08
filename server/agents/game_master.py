@@ -461,7 +461,7 @@ class GameMaster:
         """
         玩家聊天完整串行流程入口（req_type=chat）
 
-        流程：pre_context -> build_messages -> llm_chat_loop -> 解析 -> save_dispatcher -> 返回
+        流程：忙碌检查 -> pre_context -> build_messages -> llm_chat_loop -> 解析 -> 耗时处理 -> save_dispatcher -> 返回
 
         Args:
             uid: 玩家唯一标识
@@ -471,12 +471,17 @@ class GameMaster:
             req_type: 请求类型，"chat" 为普通聊天，"tutorial" 为引导教程
 
         Returns:
-            {"dialog": ..., "player_update": ..., "ui_config": ...}
+            {"dialog": ..., "player_update": ..., "ui_config": ..., "time_cost": ..., "busy_state": ...}
         """
         info_log(f"处理玩家聊天: uid={uid}, area={current_area}, input={user_input}")
         debug_log(f"[handle_chat] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
 
         try:
+            # 0. 检查玩家忙碌状态
+            busy_info = self._check_and_handle_busy(uid)
+            if busy_info:
+                return busy_info
+
             # 1. 预拉外围数据
             debug_log(f"[handle_chat] Step1 开始预拉外围数据: uid={uid}")
             memory_text, plot_text = self.pre_context(uid, user_input)
@@ -506,28 +511,46 @@ class GameMaster:
             player_update = resp_json.get("player_update", {})
             ui_config = resp_json.get("ui_config", {})
             save_flag = resp_json.get("save_flag", "")
-            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, actions={actions}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
+            time_cost = resp_json.get("time_cost", 0)
+            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, time_cost={time_cost}, actions={actions}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
 
-            # 5. 落库分发
+            # 5. 耗时处理：推进游戏时间 + 设置忙碌状态
+            time_advance_info = None
+            busy_state = None
+            if time_cost and time_cost > 0:
+                debug_log(f"[handle_chat] Step5 耗时处理: time_cost={time_cost}分钟")
+                time_advance_info, busy_state = self._handle_time_cost(
+                    uid, time_cost, player_update.get("current_status", "")
+                )
+            else:
+                debug_log(f"[handle_chat] Step5 跳过耗时处理: time_cost={time_cost}")
+
+            # 6. 落库分发
             if self.storage and save_flag:
-                debug_log(f"[handle_chat] Step5 开始落库分发: flag={save_flag}, uid={uid}")
+                debug_log(f"[handle_chat] Step6 开始落库分发: flag={save_flag}, uid={uid}")
                 try:
                     self.storage.save_dispatcher(save_flag, uid, current_area, resp_json)
                     info_log(f"落库完成: uid={uid}, flag={save_flag}")
-                    debug_log(f"[handle_chat] Step5 落库分发完成: flag={save_flag}")
+                    debug_log(f"[handle_chat] Step6 落库分发完成: flag={save_flag}")
                 except Exception as e:
                     error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
             else:
-                debug_log(f"[handle_chat] Step5 跳过落库: save_flag={save_flag}, storage={'已初始化' if self.storage else '未初始化'}")
+                debug_log(f"[handle_chat] Step6 跳过落库: save_flag={save_flag}, storage={'已初始化' if self.storage else '未初始化'}")
 
-            # 6. 返回结果（不暴露 save_flag 给前端）
-            debug_log(f"[handle_chat] Step6 返回结果: dialog长度={len(dialog)}, actions={actions}")
-            return {
+            # 7. 返回结果（不暴露 save_flag 给前端）
+            debug_log(f"[handle_chat] Step7 返回结果: dialog长度={len(dialog)}, actions={actions}, time_cost={time_cost}")
+            result = {
                 "dialog": dialog,
                 "actions": actions,
                 "player_update": player_update,
                 "ui_config": ui_config,
+                "time_cost": time_cost,
             }
+            if time_advance_info:
+                result["time_advance"] = time_advance_info
+            if busy_state:
+                result["busy_state"] = busy_state
+            return result
 
         except Exception as e:
             error_log(f"处理玩家聊天异常: uid={uid}, 错误: {e}")
@@ -536,6 +559,7 @@ class GameMaster:
                 "actions": [],
                 "player_update": {},
                 "ui_config": {},
+                "time_cost": 0,
             }
 
     def world_tick_task(self) -> Dict[str, Any]:
@@ -602,6 +626,74 @@ class GameMaster:
     # ================================================================
     # 辅助方法
     # ================================================================
+
+    def _check_and_handle_busy(self, uid: str) -> Optional[Dict[str, Any]]:
+        """
+        检查玩家忙碌状态，如果忙碌则返回提示响应
+
+        Args:
+            uid: 玩家唯一标识
+
+        Returns:
+            忙碌提示响应字典，未忙碌时返回 None
+        """
+        try:
+            from player_busy_manager import get_player_busy_manager
+            busy_mgr = get_player_busy_manager()
+            if busy_mgr and busy_mgr.is_busy(uid):
+                busy_info = busy_mgr.get_busy_info(uid)
+                if busy_info:
+                    remaining = busy_info.get("cooldown_remaining_seconds", 0)
+                    action = busy_info.get("action", "进行中")
+                    info_log(f"玩家忙碌中: uid={uid}, action={action}, remaining={remaining}s")
+                    return {
+                        "dialog": f"你正在{action}之中，尚需片刻方能结束。（剩余约{int(remaining)}秒）",
+                        "actions": ["等待完成", "中断当前行为"],
+                        "player_update": {},
+                        "ui_config": {},
+                        "time_cost": 0,
+                        "busy_state": busy_info,
+                    }
+        except Exception as e:
+            error_log(f"检查忙碌状态异常: uid={uid}, 错误: {e}")
+        return None
+
+    def _handle_time_cost(self, uid: str, time_cost: int, action_desc: str) -> tuple:
+        """
+        处理耗时行为：推进游戏时间 + 设置忙碌状态
+
+        Args:
+            uid: 玩家唯一标识
+            time_cost: 游戏分钟数
+            action_desc: 行为描述
+
+        Returns:
+            (time_advance_info, busy_state) 元组
+        """
+        time_advance_info = None
+        busy_state = None
+
+        # 推进游戏时间
+        try:
+            from world_time_service import get_world_time_service_instance
+            wts = get_world_time_service_instance()
+            if wts:
+                time_advance_info = wts.advance_time_by_action(time_cost, action_desc)
+                info_log(f"游戏时间已推进: uid={uid}, time_cost={time_cost}分钟, action={action_desc}")
+        except Exception as e:
+            error_log(f"推进游戏时间失败: uid={uid}, time_cost={time_cost}, 错误: {e}")
+
+        # 设置忙碌状态
+        try:
+            from player_busy_manager import get_player_busy_manager
+            busy_mgr = get_player_busy_manager()
+            if busy_mgr:
+                busy_state = busy_mgr.set_busy(uid, action_desc or "耗时行为", time_cost)
+                info_log(f"玩家忙碌状态已设置: uid={uid}, action={action_desc}, cooldown={busy_state.get('cooldown_seconds', 0)}s")
+        except Exception as e:
+            error_log(f"设置忙碌状态失败: uid={uid}, 错误: {e}")
+
+        return time_advance_info, busy_state
 
     def _get_game_time_info(self) -> str:
         """
@@ -1018,7 +1110,7 @@ class GameMaster:
         """
         玩家聊天流式串行流程入口（req_type=chat, stream=True）
 
-        流程：pre_context -> build_messages -> llm_chat_loop_stream -> 落库分发 -> done
+        流程：忙碌检查 -> pre_context -> build_messages -> llm_chat_loop_stream -> 耗时处理 -> 落库分发 -> done
 
         Args:
             uid: 玩家唯一标识
@@ -1034,6 +1126,22 @@ class GameMaster:
         debug_log(f"[handle_chat_stream] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
 
         try:
+            # 0. 检查玩家忙碌状态
+            busy_info = self._check_and_handle_busy(uid)
+            if busy_info:
+                # 忙碌中，直接返回提示
+                yield self._sse_event("result", {
+                    "dialog": busy_info.get("dialog", ""),
+                    "actions": busy_info.get("actions", []),
+                    "player_update": busy_info.get("player_update", {}),
+                    "ui_config": busy_info.get("ui_config", {}),
+                    "save_flag": "",
+                    "time_cost": 0,
+                    "busy_state": busy_info.get("busy_state"),
+                })
+                yield self._sse_event("done", {})
+                return
+
             # 1. 预拉外围数据
             debug_log(f"[handle_chat_stream] Step1 开始预拉外围数据: uid={uid}")
             memory_text, plot_text = self.pre_context(uid, user_input)
@@ -1067,17 +1175,33 @@ class GameMaster:
                             except json.JSONDecodeError:
                                 pass
 
-            # 4. 落库分发
+            # 4. 耗时处理：推进游戏时间 + 设置忙碌状态
+            time_cost = resp_json.get("time_cost", 0)
+            if time_cost and time_cost > 0:
+                debug_log(f"[handle_chat_stream] Step4 耗时处理: time_cost={time_cost}分钟")
+                time_advance_info, busy_state = self._handle_time_cost(
+                    uid, time_cost, resp_json.get("player_update", {}).get("current_status", "")
+                )
+                # 发送时间推进事件
+                if time_advance_info:
+                    yield self._sse_event("time_advance", time_advance_info)
+                # 发送忙碌状态事件
+                if busy_state:
+                    yield self._sse_event("busy_state", busy_state)
+            else:
+                debug_log(f"[handle_chat_stream] Step4 跳过耗时处理: time_cost={time_cost}")
+
+            # 5. 落库分发
             save_flag = resp_json.get("save_flag", "")
             if self.storage and save_flag:
-                debug_log(f"[handle_chat_stream] Step4 开始落库分发: flag={save_flag}, uid={uid}")
+                debug_log(f"[handle_chat_stream] Step5 开始落库分发: flag={save_flag}, uid={uid}")
                 try:
                     self.storage.save_dispatcher(save_flag, uid, current_area, resp_json)
                     info_log(f"落库完成: uid={uid}, flag={save_flag}")
                 except Exception as e:
                     error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
 
-            # 5. 发送完成事件
+            # 6. 发送完成事件
             yield self._sse_event("done", {})
 
         except Exception as e:

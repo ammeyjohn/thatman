@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState } from '../types';
+import type { CharacterState, WorldState, BusyState, TimeAdvanceInfo } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -71,6 +71,10 @@ interface GameState {
   fetchWorldTime: () => Promise<void>;
   fetchInventory: () => Promise<void>;
   fetchEquipment: () => Promise<void>;
+  fetchBusyState: () => Promise<void>;
+  interruptAction: () => Promise<void>;
+  handleTimeAdvance: (timeAdvance: TimeAdvanceInfo) => void;
+  handleBusyState: (busyState: BusyState) => void;
   // 时间同步内部状态和方法
   _worldTimeTickInterval: number | null;
   _worldTimePollInterval: number | null;
@@ -80,6 +84,9 @@ interface GameState {
   _stopLocalWorldTimeTick: () => void;
   _startWorldTimePolling: () => void;
   _stopWorldTimePolling: () => void;
+  _busyStateCheckInterval: number | null;
+  _startBusyStateCheck: () => void;
+  _stopBusyStateCheck: () => void;
 }
 
 const initialCharacter: CharacterState = {
@@ -101,6 +108,8 @@ const initialCharacter: CharacterState = {
   lifespan: '',
   clothing: '',
   inventory: [],
+  busyState: null,
+  lastTimeCost: 0,
 };
 
 const initialWorld: WorldState = {
@@ -469,6 +478,9 @@ export const useGameStore = create<GameState>((set, get) => ({
           st.generateLayout('world');
         }
       }, 3000);
+
+      // 加载忙碌状态
+      useGameStore.getState().fetchBusyState();
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
@@ -630,5 +642,132 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     const { generateLayout } = useGameStore.getState();
     await generateLayout(panelType);
+  },
+
+  fetchBusyState: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/busy-state?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+
+      const data = await response.json();
+      set((state) => ({
+        character: {
+          ...state.character,
+          busyState: data.is_busy ? data.busy_state : null,
+        },
+      }));
+
+      // 如果忙碌，启动冷却检查
+      if (data.is_busy) {
+        useGameStore.getState()._startBusyStateCheck();
+      }
+    } catch (error) {
+      console.error('[BusyState] 获取忙碌状态失败:', error);
+    }
+  },
+
+  interruptAction: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/interrupt`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ uid }),
+      });
+      if (!response.ok) return;
+
+      const data = await response.json();
+      if (data.interrupted) {
+        set((state) => ({
+          character: {
+            ...state.character,
+            busyState: null,
+          },
+        }));
+        useGameStore.getState()._stopBusyStateCheck();
+        console.log('[BusyState] 已中断耗时行为:', data.message);
+      }
+    } catch (error) {
+      console.error('[BusyState] 中断耗时行为失败:', error);
+    }
+  },
+
+  handleTimeAdvance: (timeAdvance: TimeAdvanceInfo) => {
+    const newTime = timeAdvance.new_time;
+    set((state) => ({
+      character: {
+        ...state.character,
+        lastTimeCost: timeAdvance.advanced_minutes,
+      },
+      world: {
+        ...state.world,
+        gameDate: newTime.game_date,
+        gameHour: newTime.game_hour,
+        gameMinute: newTime.game_minute,
+        time: newTime.shichen_name,
+        timePeriod: newTime.shichen_period,
+        shichenIndex: newTime.shichen_index,
+      },
+    }));
+    console.log(`[TimeAdvance] 时间推进: +${timeAdvance.advanced_minutes}分钟, 原因=${timeAdvance.reason}`);
+  },
+
+  handleBusyState: (busyState: BusyState) => {
+    set((state) => ({
+      character: {
+        ...state.character,
+        busyState: busyState,
+      },
+    }));
+    // 启动冷却检查
+    useGameStore.getState()._startBusyStateCheck();
+    console.log(`[BusyState] 进入忙碌状态: ${busyState.action}, 冷却${busyState.cooldownSeconds}秒`);
+  },
+
+  _busyStateCheckInterval: null,
+
+  _startBusyStateCheck: () => {
+    const { _busyStateCheckInterval } = get();
+    if (_busyStateCheckInterval) return;
+
+    // 每2秒检查一次冷却是否结束
+    const interval = window.setInterval(() => {
+      const { busyState } = get().character;
+      if (!busyState) {
+        useGameStore.getState()._stopBusyStateCheck();
+        return;
+      }
+
+      const now = Date.now();
+      if (now >= busyState.cooldownEndAt) {
+        // 冷却结束，清除忙碌状态
+        set((state) => ({
+          character: {
+            ...state.character,
+            busyState: null,
+          },
+        }));
+        useGameStore.getState()._stopBusyStateCheck();
+        console.log('[BusyState] 冷却结束，忙碌状态已清除');
+      }
+    }, 2000);
+
+    set({ _busyStateCheckInterval: interval });
+  },
+
+  _stopBusyStateCheck: () => {
+    const { _busyStateCheckInterval } = get();
+    if (_busyStateCheckInterval) {
+      clearInterval(_busyStateCheckInterval);
+      set({ _busyStateCheckInterval: null });
+      console.log('[BusyState] 冷却检查已停止');
+    }
   },
 }));

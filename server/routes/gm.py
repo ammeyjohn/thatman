@@ -14,6 +14,7 @@ from game_master import GameMaster
 from gm_logger import debug_log, info_log, error_log
 from layout_generator import LayoutGenerator, get_layout_generator
 from world_time_service import WorldTimeService, set_world_time_service
+from player_busy_manager import PlayerBusyManager, set_player_busy_manager, get_player_busy_manager
 from routes.auth import _verify_token
 
 # 配置日志
@@ -57,6 +58,24 @@ def get_world_time_service():
         except Exception as e:
             error_log(f"WorldTimeService 初始化失败: {e}")
     return _world_time_service
+
+
+# 初始化 PlayerBusyManager 实例
+_player_busy_manager = None
+
+
+def get_player_busy_mgr():
+    """获取或初始化 PlayerBusyManager 实例（单例）"""
+    global _player_busy_manager
+    if _player_busy_manager is None:
+        try:
+            gm = get_gm()
+            _player_busy_manager = PlayerBusyManager(gm.storage)
+            set_player_busy_manager(_player_busy_manager)
+            info_log("PlayerBusyManager 初始化成功")
+        except Exception as e:
+            error_log(f"PlayerBusyManager 初始化失败: {e}")
+    return _player_busy_manager
 
 
 def _get_storage():
@@ -245,8 +264,15 @@ def gm_chat():
             'dialog': result.get('dialog', ''),
             'actions': result.get('actions', []),
             'player_update': result.get('player_update', {}),
-            'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []})
+            'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []}),
+            'time_cost': result.get('time_cost', 0),
         }
+        # 附加时间推进信息
+        if result.get('time_advance'):
+            response_data['time_advance'] = result['time_advance']
+        # 附加忙碌状态信息
+        if result.get('busy_state'):
+            response_data['busy_state'] = result['busy_state']
 
         # 保存 NPC 回复到聊天历史（与 LLM 无关，保证所有聊天都保存）
         try:
@@ -1156,6 +1182,141 @@ def get_equipment():
         })
     except Exception as e:
         error_log(f"获取玩家装备失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/busy-state', methods=['GET'])
+def get_busy_state():
+    """
+    查询玩家忙碌状态
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    响应格式:
+    {
+        "uid": "string",
+        "is_busy": false,
+        "busy_state": null
+    }
+    或
+    {
+        "uid": "string",
+        "is_busy": true,
+        "busy_state": {
+            "action": "打坐修炼",
+            "game_minutes": 120,
+            "cooldown_seconds": 50,
+            "cooldown_remaining_seconds": 35.2,
+            "cooldown_end_at": 1717834567890,
+            "started_at": 1717834517890
+        }
+    }
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        busy_mgr = get_player_busy_mgr()
+        busy_info = busy_mgr.get_busy_info(uid) if busy_mgr else None
+
+        return jsonify({
+            'uid': uid,
+            'is_busy': busy_info is not None,
+            'busy_state': busy_info,
+        })
+    except Exception as e:
+        error_log(f"获取玩家忙碌状态失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/interrupt', methods=['POST'])
+def interrupt_action():
+    """
+    中断玩家当前耗时行为
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)"
+    }
+
+    响应格式:
+    {
+        "uid": "string",
+        "interrupted": true,
+        "message": "已中断打坐修炼"
+    }
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        busy_mgr = get_player_busy_mgr()
+        if not busy_mgr:
+            return jsonify({
+                'uid': uid,
+                'interrupted': False,
+                'message': '忙碌状态管理器不可用',
+            })
+
+        busy_info = busy_mgr.get_busy_info(uid)
+        if not busy_info:
+            return jsonify({
+                'uid': uid,
+                'interrupted': False,
+                'message': '当前没有进行中的耗时行为',
+            })
+
+        action = busy_info.get("action", "耗时行为")
+        busy_mgr.clear_busy(uid)
+        info_log(f"玩家中断耗时行为: uid={uid}, action={action}")
+
+        return jsonify({
+            'uid': uid,
+            'interrupted': True,
+            'message': f'已中断{action}',
+        })
+    except Exception as e:
+        error_log(f"中断耗时行为失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

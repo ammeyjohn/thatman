@@ -17,6 +17,46 @@ export interface CharacterState {
   lifespan: string;
   clothing: string;
   inventory: InventoryItem[];
+  busyState: BusyState | null;
+  lastTimeCost: number;
+}
+
+export interface BusyState {
+  action: string;
+  gameMinutes: number;
+  cooldownSeconds: number;
+  cooldownRemainingSeconds: number;
+  cooldownEndAt: number;
+  startedAt: number;
+}
+
+export interface TimeAdvanceInfo {
+  advanced_minutes: number;
+  reason: string;
+  old_time: {
+    game_date: string;
+    game_year: number;
+    game_month: number;
+    game_day: number;
+    game_hour: number;
+    game_minute: number;
+    shichen_name: string;
+    shichen_period: string;
+    shichen_index: number;
+  };
+  new_time: {
+    game_date: string;
+    game_year: number;
+    game_month: number;
+    game_day: number;
+    game_hour: number;
+    game_minute: number;
+    shichen_name: string;
+    shichen_period: string;
+    shichen_index: number;
+    time_ratio: number;
+  };
+  shichen_changed: boolean;
 }
 
 export interface Equipment {

@@ -115,6 +115,16 @@ function App() {
                   applyGmResponseToGameStore(data.player_update || {}, data.ui_config || {});
                   break;
                 }
+                case 'time_advance': {
+                  const gameStore = useGameStore.getState();
+                  gameStore.handleTimeAdvance(data as unknown as import('./types').TimeAdvanceInfo);
+                  break;
+                }
+                case 'busy_state': {
+                  const gameStore = useGameStore.getState();
+                  gameStore.handleBusyState(data as unknown as import('./types').BusyState);
+                  break;
+                }
                 case 'error':
                   console.error('引导教程流式错误:', data.message);
                   break;

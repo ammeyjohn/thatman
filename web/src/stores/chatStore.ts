@@ -118,6 +118,8 @@ async function streamGmChat(
   onDialogDelta: (content: string) => void,
   onResult: (result: { dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown> }) => void,
   onError: (message: string) => void,
+  onTimeAdvance?: (data: Record<string, unknown>) => void,
+  onBusyState?: (data: Record<string, unknown>) => void,
 ): Promise<void> {
   const response = await fetch(`${config.API_BASE_URL}/gm/chat`, {
     method: 'POST',
@@ -176,6 +178,12 @@ async function streamGmChat(
               break;
             case 'error':
               onError(data.message || '未知错误');
+              break;
+            case 'time_advance':
+              onTimeAdvance?.(data);
+              break;
+            case 'busy_state':
+              onBusyState?.(data);
               break;
             case 'done':
               // 流结束
@@ -521,6 +529,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             updateLastMessage(`错误: ${message}`);
           }
         },
+        // onTimeAdvance
+        (data) => {
+          const gameStore = useGameStore.getState();
+          gameStore.handleTimeAdvance(data as unknown as import('../types').TimeAdvanceInfo);
+        },
+        // onBusyState
+        (data) => {
+          const gameStore = useGameStore.getState();
+          gameStore.handleBusyState(data as unknown as import('../types').BusyState);
+        },
       );
 
     } catch (error) {
@@ -782,6 +800,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (lastMsg && lastMsg.sender === 'npc' && !lastMsg.content) {
             updateLastMessage(`错误: ${message}`);
           }
+        },
+        // onTimeAdvance
+        (data) => {
+          const gameStore = useGameStore.getState();
+          gameStore.handleTimeAdvance(data as unknown as import('../types').TimeAdvanceInfo);
+        },
+        // onBusyState
+        (data) => {
+          const gameStore = useGameStore.getState();
+          gameStore.handleBusyState(data as unknown as import('../types').BusyState);
         },
       );
 

@@ -482,6 +482,74 @@ class WorldTimeService:
                 "time_ratio": self.TIME_RATIO,
             }
 
+    def advance_time_by_action(self, minutes: int, reason: str = "") -> dict:
+        """
+        因玩家行为推进游戏时间
+
+        与 _tick() 的自然推进不同，此方法由玩家行为触发，
+        推进后立即保存到数据库并通知所有订阅者。
+
+        Args:
+            minutes: 推进的游戏分钟数
+            reason: 推进原因（如"打坐修炼"），用于日志
+
+        Returns:
+            推进前后的时间信息字典，供前端更新
+        """
+        if minutes <= 0:
+            return {
+                "advanced_minutes": 0,
+                "reason": reason,
+                "old_time": self.get_current_time(),
+                "new_time": self.get_current_time(),
+                "shichen_changed": False,
+            }
+
+        with self._lock:
+            # 记录推进前的时间
+            old_shichen = _get_shichen(self._game_hour)
+            old_time = {
+                "game_date": self._format_game_date(),
+                "game_year": self._game_year,
+                "game_month": self._game_month,
+                "game_day": self._game_day,
+                "game_hour": self._game_hour,
+                "game_minute": self._game_minute,
+                "shichen_name": old_shichen["name"],
+                "shichen_period": old_shichen["period"],
+                "shichen_index": old_shichen["index"],
+            }
+
+            # 推进时间
+            self._advance_time(minutes)
+
+            # 检测时辰变化
+            new_shichen = _get_shichen(self._game_hour)
+
+            # 保存到数据库（行为推进是重要事件，必须立即持久化）
+            self._save_to_db()
+
+            # 构造返回信息
+            new_time = self.get_current_time()
+            result = {
+                "advanced_minutes": minutes,
+                "reason": reason,
+                "old_time": old_time,
+                "new_time": new_time,
+                "shichen_changed": new_shichen["index"] != old_shichen["index"],
+            }
+
+            info_log(f"行为推进时间: {minutes}游戏分钟, 原因={reason or '未指定'}, "
+                     f"时辰变化={'是' if result['shichen_changed'] else '否'}, "
+                     f"新时间={new_time.get('game_date', '')} "
+                     f"{new_time.get('shichen_name', '')}·{new_time.get('shichen_period', '')} "
+                     f"{new_time.get('game_hour', 0):02d}:{new_time.get('game_minute', 0):02d}")
+
+            # 通知所有订阅者（行为推进也需要通知前端更新时间）
+            self._notify_subscribers(new_time)
+
+            return result
+
     def subscribe(self, callback: Callable) -> None:
         """
         订阅时辰变化事件

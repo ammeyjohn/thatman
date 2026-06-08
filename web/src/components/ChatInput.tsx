@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Send, Square } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Send, Square, Clock, X } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { useGameStore } from '../stores/gameStore';
 import { BackpackDialog } from './BackpackDialog';
@@ -12,11 +12,31 @@ const quickActions = [
 
 export function ChatInput() {
   const { inputValue, setInputValue, sendMessage, isLoading, stopGeneration, streamStats } = useChatStore();
-  const { fetchInventory, fetchEquipment } = useGameStore();
+  const { fetchInventory, fetchEquipment, character, interruptAction } = useGameStore();
   const [isFocused, setIsFocused] = useState(false);
   const [backpackOpen, setBackpackOpen] = useState(false);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
+  const [busyRemaining, setBusyRemaining] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const busyState = character.busyState;
+
+  // 更新忙碌状态倒计时
+  useEffect(() => {
+    if (!busyState) {
+      setBusyRemaining(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const remaining = Math.max(0, Math.ceil((busyState.cooldownEndAt - Date.now()) / 1000));
+      setBusyRemaining(remaining);
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [busyState]);
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -24,6 +44,10 @@ export function ChatInput() {
     const content = inputValue.trim();
     setInputValue('');
     await sendMessage(content);
+  };
+
+  const handleInterrupt = async () => {
+    await interruptAction();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -53,6 +77,25 @@ export function ChatInput() {
 
   return (
     <div data-name="chat-input" className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30 flex-shrink-0">
+      {/* Busy State Banner */}
+      {busyState && busyRemaining > 0 && (
+        <div data-name="busy-state" className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-[#2d5a5a]/20 border border-[#c9a227]/30 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-[#c9a227] animate-pulse" />
+            <span className="text-sm text-[#c9a227]">
+              {busyState.action}中... 剩余 {busyRemaining}s
+            </span>
+          </div>
+          <button
+            onClick={handleInterrupt}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-[#a0c0c0] hover:text-[#e8e4dc] bg-[#1a2f2f]/50 hover:bg-[#2d5a5a]/30 rounded transition-all duration-200"
+          >
+            <X className="w-3 h-3" />
+            <span>中断</span>
+          </button>
+        </div>
+      )}
+
       {/* Quick Actions */}
       <div data-name="quick-actions" className="flex gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
         {quickActions.map((action) => (
