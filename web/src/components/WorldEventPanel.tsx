@@ -36,7 +36,7 @@ export function WorldEventPanel() {
   const displayTime = lastTime || world.time;
 
   return (
-    <div className="w-[280px] bg-[#0d1f1f] border-l border-[#2d5a5a]/30 flex flex-col">
+    <div className="w-[280px] h-full bg-[#0d1f1f] border-l border-[#2d5a5a]/30 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-[#2d5a5a]/30 bg-[#0d1f1f]">
         <div className="flex items-center gap-2">
@@ -47,7 +47,7 @@ export function WorldEventPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4">
         {worldLayout ? (
           // 动态 HTML 布局渲染
           <div ref={layoutRef} dangerouslySetInnerHTML={{ __html: worldLayout }} />

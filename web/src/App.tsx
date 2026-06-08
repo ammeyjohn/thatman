@@ -158,8 +158,8 @@ function App() {
     <div className="h-screen w-screen overflow-hidden bg-[#0a0a0f] flex">
       {/* Left Panel */}
       <div
-        className={`bg-[#0d1f1f] relative flex flex-col transition-all duration-300 ease-in-out ${
-          leftCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-[280px] opacity-100'
+        className={`bg-[#0d1f1f] relative flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${
+          leftCollapsed ? 'w-0 opacity-0' : 'w-[280px] opacity-100'
         }`}
       >
         <CharacterPanel />
@@ -184,7 +184,7 @@ function App() {
       </div>
 
       {/* Center Panel - Chat Area */}
-      <div className="flex-1 min-w-0 flex flex-col h-full">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden">
         <ChatArea />
       </div>
 
@@ -208,8 +208,8 @@ function App() {
 
       {/* Right Panel */}
       <div
-        className={`bg-[#0d1f1f] relative flex flex-col transition-all duration-300 ease-in-out ${
-          rightCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-[280px] opacity-100'
+        className={`bg-[#0d1f1f] relative flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${
+          rightCollapsed ? 'w-0 opacity-0' : 'w-[280px] opacity-100'
         }`}
       >
         <WorldEventPanel />

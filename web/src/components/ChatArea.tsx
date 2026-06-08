@@ -6,15 +6,17 @@ import { MessageSquare } from 'lucide-react';
 
 export function ChatArea() {
   const { messages, sendMessage } = useChatStore();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 使用 scrollTop 而非 scrollIntoView，避免滚动 body 导致页面上移
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   return (
-    <div data-name="chat-area" className="flex-1 flex flex-col min-w-0 bg-gradient-to-b from-[#0a0a0f] via-[#0d1515] to-[#0a0a0f] overflow-hidden">
+    <div data-name="chat-area" className="flex-1 flex flex-col min-w-0 min-h-0 bg-gradient-to-b from-[#0a0a0f] via-[#0d1515] to-[#0a0a0f] overflow-hidden">
       {/* Header */}
       <div data-name="chat-header" className="px-6 py-4 border-b border-[#2d5a5a]/30 flex items-center justify-between bg-[#0d1f1f]/50 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -38,7 +40,7 @@ export function ChatArea() {
       <div
         data-name="message-list"
         ref={containerRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 scrollbar-thin scrollbar-thumb-[#2d5a5a] scrollbar-track-transparent min-w-0"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 py-4 scrollbar-thin scrollbar-thumb-[#2d5a5a] scrollbar-track-transparent min-w-0"
       >
         {messages.length === 0 ? (
           <div data-name="empty-state" className="flex flex-col items-center justify-center h-full text-[#5a7a7a]">
@@ -56,7 +58,6 @@ export function ChatArea() {
                 onOptionClick={(option) => sendMessage(option)}
               />
             ))}
-            <div ref={messagesEndRef} />
           </>
         )}
       </div>
