@@ -42,7 +42,7 @@ export function WorldEventPanel() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin">
         {/* Game Date — 始终显示在顶部 */}
         {world.gameDate && (
           <div className="mb-4 p-3 bg-gradient-to-r from-[#c9a227]/10 to-transparent rounded-lg border border-[#c9a227]/30">

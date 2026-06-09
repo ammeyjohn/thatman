@@ -100,7 +100,7 @@ export function CharacterPanel() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin">
         {characterLayout ? (
           // 动态 HTML 布局渲染
           <>
