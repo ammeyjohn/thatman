@@ -27,9 +27,22 @@ function getTypeLabel(type: string): string {
   return TYPE_ICON_MAP[type] ? type : '其他';
 }
 
-function groupItemsByType(inventory: InventoryItem[]): Map<string, InventoryItem[]> {
+function normalizeItem(item: unknown, index: number): InventoryItem | null {
+  if (!item || typeof item !== 'object') return null;
+  const raw = item as Record<string, unknown>;
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '未知物品';
+  const type = typeof raw.type === 'string' && raw.type.trim() ? raw.type.trim() : '其他';
+  const description = typeof raw.description === 'string' ? raw.description : '';
+  const quantity = typeof raw.quantity === 'number' && !isNaN(raw.quantity) ? Math.max(1, raw.quantity) : 1;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `item_${index}`;
+  return { id, name, type, description, quantity };
+}
+
+function groupItemsByType(inventory: unknown[]): Map<string, InventoryItem[]> {
   const groups = new Map<string, InventoryItem[]>();
-  for (const item of inventory) {
+  for (let i = 0; i < inventory.length; i++) {
+    const item = normalizeItem(inventory[i], i);
+    if (!item) continue;
     const label = getTypeLabel(item.type);
     if (!groups.has(label)) {
       groups.set(label, []);
@@ -48,15 +61,18 @@ function groupItemsByType(inventory: InventoryItem[]): Map<string, InventoryItem
 
 export function BackpackDialog({ open, onClose }: BackpackDialogProps) {
   const { character } = useGameStore();
-  const rawInventory = character.inventory;
-  const inventory = rawInventory ?? [];
+  const rawInventory = character.inventory ?? [];
 
-  const groupedItems = useMemo(
-    () => groupItemsByType(inventory),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const normalizedInventory = useMemo(
+    () => rawInventory.map((item, index) => normalizeItem(item, index)).filter((item): item is InventoryItem => item !== null),
     [rawInventory]
   );
-  const isEmpty = inventory.length === 0;
+
+  const groupedItems = useMemo(
+    () => groupItemsByType(normalizedInventory),
+    [normalizedInventory]
+  );
+  const isEmpty = normalizedInventory.length === 0;
 
   if (!open) return null;
 
@@ -192,10 +208,10 @@ export function BackpackDialog({ open, onClose }: BackpackDialogProps) {
           <div className="px-5 py-2.5 border-t border-[#2d5a5a]/30 bg-[#0D0D0D]/50">
             <div className="flex items-center justify-between">
               <span className="text-xs" style={{ color: '#7F8C8D' }}>
-                共 {inventory.length} 种物品
+                共 {normalizedInventory.length} 种物品
               </span>
               <span className="text-xs" style={{ color: '#7F8C8D' }}>
-                总计 {inventory.reduce((sum, item) => sum + item.quantity, 0)} 件
+                总计 {normalizedInventory.reduce((sum, item) => sum + item.quantity, 0)} 件
               </span>
             </div>
           </div>

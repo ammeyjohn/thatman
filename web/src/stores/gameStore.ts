@@ -32,23 +32,6 @@ function getShichen(hour: number): { name: string; period: string; index: number
   return { name: '子时', period: '深夜', index: 0 };
 }
 
-function advanceGameTime(state: WorldState, minutes: number): Partial<WorldState> {
-  const totalMinutes = state.gameHour * 60 + state.gameMinute + minutes;
-  const newHour = Math.floor(totalMinutes / 60) % 24;
-  const newMinute = totalMinutes % 60;
-
-  const shichen = getShichen(newHour);
-  const updates: Partial<WorldState> = {
-    gameHour: newHour,
-    gameMinute: newMinute,
-    time: shichen.name,
-    timePeriod: shichen.period,
-    shichenIndex: shichen.index,
-  };
-
-  return updates;
-}
-
 interface GameState {
   character: CharacterState;
   world: WorldState;
@@ -65,25 +48,18 @@ interface GameState {
   generateLayout: (panelType: 'character' | 'world') => Promise<void>;
   regenerateLayout: (panelType: 'character' | 'world') => Promise<void>;
   loadUserInfo: () => Promise<void>;
-  worldTimeSSE: EventSource | null;
-  connectWorldTimeSSE: () => void;
-  disconnectWorldTimeSSE: () => void;
+  eventsSSE: EventSource | null;
+  connectEventsSSE: () => void;
+  disconnectEventsSSE: () => void;
   fetchWorldTime: () => Promise<void>;
+  fetchWeather: () => Promise<void>;
   fetchInventory: () => Promise<void>;
   fetchEquipment: () => Promise<void>;
   fetchBusyState: () => Promise<void>;
   interruptAction: () => Promise<void>;
   handleTimeAdvance: (timeAdvance: TimeAdvanceInfo) => void;
   handleBusyState: (busyState: BusyState) => void;
-  // 时间同步内部状态和方法
-  _worldTimeTickInterval: number | null;
-  _worldTimePollInterval: number | null;
-  _lastServerSyncAt: number;
   _syncWorldTime: (data: Partial<WorldState> & { gameMinute?: number }) => void;
-  _startLocalWorldTimeTick: () => void;
-  _stopLocalWorldTimeTick: () => void;
-  _startWorldTimePolling: () => void;
-  _stopWorldTimePolling: () => void;
   _busyStateCheckInterval: number | null;
   _startBusyStateCheck: () => void;
   _stopBusyStateCheck: () => void;
@@ -157,10 +133,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   isGeneratingCharacterLayout: false,
   isGeneratingWorldLayout: false,
   _layoutGenerationQueue: { character: false, world: false },
-  worldTimeSSE: null,
-  _worldTimeTickInterval: null,
-  _worldTimePollInterval: null,
-  _lastServerSyncAt: 0,
+  eventsSSE: null,
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -326,51 +299,142 @@ export const useGameStore = create<GameState>((set, get) => ({
     });
   },
 
-  _startLocalWorldTimeTick: () => {
-    const { _worldTimeTickInterval } = get();
-    if (_worldTimeTickInterval) return;
+  connectEventsSSE: () => {
+    const { disconnectEventsSSE } = get();
+    disconnectEventsSSE(); // 保证只有一个连接
 
-    // 每 6 秒推进 1 游戏分钟（与后端 TICK_INTERVAL = 6 保持一致）
-    const interval = window.setInterval(() => {
-      set((state) => {
-        const updates = advanceGameTime(state.world, 1);
-        return { world: { ...state.world, ...updates } };
+    try {
+      const eventSource = new EventSource(`${config.API_BASE_URL}/gm/events/sse`);
+
+      // 处理 current_state：初始化全量状态
+      eventSource.addEventListener('current_state', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const { _syncWorldTime } = get();
+          if (data.time) {
+            _syncWorldTime({
+              gameDate: data.time.game_date,
+              gameHour: data.time.game_hour,
+              gameMinute: data.time.game_minute,
+              time: data.time.shichen_name,
+              timePeriod: data.time.shichen_period,
+              shichenIndex: data.time.shichen_index,
+            });
+          }
+          if (data.weather) {
+            const updates: Partial<WorldState> = {};
+            if (typeof data.weather.weather === 'string') updates.weather = data.weather.weather;
+            if (typeof data.weather.weather_desc === 'string') updates.weatherDesc = data.weather.weather_desc;
+            if (typeof data.weather.spirit_tide === 'boolean') updates.spiritTide = data.weather.spirit_tide;
+            if (typeof data.weather.spirit_tide_intensity === 'number') updates.spiritTideIntensity = data.weather.spirit_tide_intensity;
+            if (Object.keys(updates).length > 0) {
+              set((state) => ({ world: { ...state.world, ...updates } }));
+            }
+          }
+          console.log('[Events] 全量状态同步成功');
+        } catch (e) {
+          console.error('解析 current_state SSE 数据失败:', e);
+        }
       });
-    }, 6000);
 
-    set({ _worldTimeTickInterval: interval });
-    console.log('[WorldTime] 本地时间推进已启动');
-  },
+      // 处理 time_change：同步世界时间
+      eventSource.addEventListener('time_change', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const { _syncWorldTime } = get();
+          _syncWorldTime({
+            gameDate: data.game_date,
+            gameHour: data.game_hour,
+            gameMinute: data.game_minute,
+            time: data.shichen_name,
+            timePeriod: data.shichen_period,
+            shichenIndex: data.shichen_index,
+          });
+          console.log(`[Events] 时辰变化: ${data.game_date} ${data.shichen_name}·${data.shichen_period}`);
+        } catch (e) {
+          console.error('解析 time_change SSE 数据失败:', e);
+        }
+      });
 
-  _stopLocalWorldTimeTick: () => {
-    const { _worldTimeTickInterval } = get();
-    if (_worldTimeTickInterval) {
-      clearInterval(_worldTimeTickInterval);
-      set({ _worldTimeTickInterval: null });
-      console.log('[WorldTime] 本地时间推进已停止');
+      // 处理 weather_change：同步天气
+      eventSource.addEventListener('weather_change', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const updates: Partial<WorldState> = {};
+          if (typeof data.weather === 'string') updates.weather = data.weather;
+          if (typeof data.weather_desc === 'string') updates.weatherDesc = data.weather_desc;
+          if (typeof data.spirit_tide === 'boolean') updates.spiritTide = data.spirit_tide;
+          if (typeof data.spirit_tide_intensity === 'number') updates.spiritTideIntensity = data.spirit_tide_intensity;
+          if (Object.keys(updates).length > 0) {
+            set((state) => ({ world: { ...state.world, ...updates } }));
+            console.log(`[Events] 天气变化: ${data.weather}·${data.weather_desc}`);
+          }
+        } catch (e) {
+          console.error('解析 weather_change SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 layout_change：触发布局生成
+      eventSource.addEventListener('layout_change', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const { generateLayout } = useGameStore.getState();
+          if (data.panel_type === 'character' || data.panel_type === 'both') {
+            generateLayout('character');
+          }
+          if (data.panel_type === 'world' || data.panel_type === 'both') {
+            generateLayout('world');
+          }
+          console.log(`[Events] 布局变化: panel_type=${data.panel_type}`);
+        } catch (e) {
+          console.error('解析 layout_change SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 world_event：添加到事件列表
+      eventSource.addEventListener('world_event', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          set((state) => ({
+            world: {
+              ...state.world,
+              events: [data, ...state.world.events].slice(0, 50),
+            },
+          }));
+          console.log(`[Events] 世界事件: ${data.title}`);
+        } catch (e) {
+          console.error('解析 world_event SSE 数据失败:', e);
+        }
+      });
+
+      // 心跳：无操作
+      eventSource.addEventListener('heartbeat', () => {
+        // 心跳事件，仅用于保持连接活跃，无需处理
+      });
+
+      // 错误处理：自动重连
+      eventSource.onerror = () => {
+        console.error('Events SSE 连接错误，5秒后重连');
+        eventSource.close();
+        set({ eventsSSE: null });
+        setTimeout(() => {
+          useGameStore.getState().connectEventsSSE();
+        }, 5000);
+      };
+
+      set({ eventsSSE: eventSource });
+      console.log('[Events] SSE 统一连接已建立');
+    } catch (error) {
+      console.error('建立 Events SSE 连接失败:', error);
     }
   },
 
-  _startWorldTimePolling: () => {
-    const { _worldTimePollInterval } = get();
-    if (_worldTimePollInterval) return;
-
-    // 每 30 秒轮询一次服务端时间作为校准兜底
-    const interval = window.setInterval(() => {
-      const { fetchWorldTime } = get();
-      fetchWorldTime();
-    }, 30000);
-
-    set({ _worldTimePollInterval: interval });
-    console.log('[WorldTime] 时间轮询已启动');
-  },
-
-  _stopWorldTimePolling: () => {
-    const { _worldTimePollInterval } = get();
-    if (_worldTimePollInterval) {
-      clearInterval(_worldTimePollInterval);
-      set({ _worldTimePollInterval: null });
-      console.log('[WorldTime] 时间轮询已停止');
+  disconnectEventsSSE: () => {
+    const { eventsSSE } = get();
+    if (eventsSSE) {
+      eventsSSE.close();
+      set({ eventsSSE: null });
+      console.log('[Events] SSE 统一连接已断开');
     }
   },
 
@@ -444,22 +508,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       console.log('[UserInfo] 用户信息加载成功');
 
-      // 加载世界时间并启动时间同步机制
+      // 先同步一次时间和天气，降低 SSE 建立前的空白期
       const state = get();
       await state.fetchWorldTime();
-      state.connectWorldTimeSSE();
-      state._startLocalWorldTimeTick();
-      state._startWorldTimePolling();
+      await state.fetchWeather();
 
-      // 监听页面可见性变化，切回前台时立即同步时间
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible') {
-          const { fetchWorldTime } = get();
-          fetchWorldTime();
-        }
-      };
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      document.addEventListener('visibilitychange', handleVisibilityChange);
+      // 建立统一 SSE 连接
+      state.connectEventsSSE();
 
       // 加载布局
       const { loadLayout } = useGameStore.getState();
@@ -561,75 +616,24 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  connectWorldTimeSSE: () => {
-    // 先断开已有连接
-    const { disconnectWorldTimeSSE } = useGameStore.getState();
-    disconnectWorldTimeSSE();
-
+  fetchWeather: async () => {
     try {
-      const eventSource = new EventSource(`${config.API_BASE_URL}/gm/world-time/sse`);
-
-      eventSource.addEventListener('current_time', (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          const { _syncWorldTime } = get();
-          _syncWorldTime({
-            gameDate: data.game_date,
-            gameHour: data.game_hour,
-            gameMinute: data.game_minute,
-            time: data.shichen_name,
-            timePeriod: data.shichen_period,
-            shichenIndex: data.shichen_index,
-          });
-        } catch (e) {
-          console.error('解析世界时间SSE数据失败:', e);
-        }
+      const response = await fetch(`${config.API_BASE_URL}/gm/weather`, {
+        headers: getAuthHeaders(),
       });
-
-      eventSource.addEventListener('shichen_change', (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          const { _syncWorldTime } = get();
-          _syncWorldTime({
-            gameDate: data.game_date,
-            gameHour: data.game_hour,
-            gameMinute: data.game_minute,
-            time: data.shichen_name,
-            timePeriod: data.shichen_period,
-            shichenIndex: data.shichen_index,
-          });
-          console.log(`[WorldTime] 时辰变化: ${data.game_date} ${data.shichen_name}·${data.shichen_period}`);
-        } catch (e) {
-          console.error('解析时辰变化SSE数据失败:', e);
-        }
-      });
-
-      eventSource.addEventListener('heartbeat', () => {
-        // 心跳事件，仅用于保持连接活跃，无需处理
-      });
-
-      eventSource.onerror = () => {
-        console.error('世界时间SSE连接错误，5秒后重连');
-        eventSource.close();
-        set({ worldTimeSSE: null });
-        setTimeout(() => {
-          useGameStore.getState().connectWorldTimeSSE();
-        }, 5000);
-      };
-
-      set({ worldTimeSSE: eventSource });
-      console.log('[WorldTime] SSE 连接已建立');
+      if (!response.ok) return;
+      const data = await response.json();
+      const updates: Partial<WorldState> = {};
+      if (typeof data.weather === 'string') updates.weather = data.weather;
+      if (typeof data.weather_desc === 'string') updates.weatherDesc = data.weather_desc;
+      if (typeof data.spirit_tide === 'boolean') updates.spiritTide = data.spirit_tide;
+      if (typeof data.spirit_tide_intensity === 'number') updates.spiritTideIntensity = data.spirit_tide_intensity;
+      if (Object.keys(updates).length > 0) {
+        set((state) => ({ world: { ...state.world, ...updates } }));
+        console.log('[Weather] 天气同步成功:', updates);
+      }
     } catch (error) {
-      console.error('建立世界时间SSE连接失败:', error);
-    }
-  },
-
-  disconnectWorldTimeSSE: () => {
-    const { worldTimeSSE } = useGameStore.getState();
-    if (worldTimeSSE) {
-      worldTimeSSE.close();
-      set({ worldTimeSSE: null });
-      console.log('[WorldTime] SSE 连接已断开');
+      console.error('获取天气失败:', error);
     }
   },
 

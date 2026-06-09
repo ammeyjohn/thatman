@@ -38,6 +38,7 @@ interface ChatState {
   updateLastMessageRawJSON: (rawJSON: string) => void;
   updateLastMessageEntities: (entities: Entity[]) => void;
   setInputValue: (value: string) => void;
+  insertTextAtCursor: (text: string) => void;
   setStreamingContent: (content: string) => void;
   clearMessages: () => void;
   sendMessage: (content: string) => Promise<void>;
@@ -297,18 +298,6 @@ export function applyGmResponseToGameStore(
     }
   }
 
-  // 处理 layout_hint - 仅根据 GM 的明确指示触发布局更新
-  // GM 会在角色/世界发生实质性变化时设置 layout_hint，日常对话不会触发
-  const layoutHint = uiConfig.layout_hint as string | undefined;
-  if (layoutHint && layoutHint !== '') {
-    const { generateLayout } = useGameStore.getState();
-    if (layoutHint === 'character' || layoutHint === 'both') {
-      generateLayout('character');
-    }
-    if (layoutHint === 'world' || layoutHint === 'both') {
-      generateLayout('world');
-    }
-  }
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -408,6 +397,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   setInputValue: (value) => set({ inputValue: value }),
+
+  insertTextAtCursor: () => {
+    console.warn('insertTextAtCursor 尚未注册，请在 ChatInput 组件中注册实现');
+  },
 
   setStreamingContent: (content) => set({ streamingContent: content }),
 

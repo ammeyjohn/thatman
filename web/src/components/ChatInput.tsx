@@ -5,6 +5,38 @@ import { useGameStore } from '../stores/gameStore';
 import { BackpackDialog } from './BackpackDialog';
 import { EquipmentDialog } from './EquipmentDialog';
 
+// 注册光标处插入文本的实现到 chatStore
+function registerInsertTextAtCursor(
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+  setInputValue: (value: string) => void,
+) {
+  useChatStore.setState({
+    insertTextAtCursor: (text: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        // 如果 textarea 不可用，直接追加到末尾
+        const currentValue = useChatStore.getState().inputValue;
+        setInputValue(currentValue + text);
+        return;
+      }
+
+      const start = textarea.selectionStart ?? 0;
+      const end = textarea.selectionEnd ?? 0;
+      const currentValue = textarea.value;
+
+      const newValue = currentValue.slice(0, start) + text + currentValue.slice(end);
+      setInputValue(newValue);
+
+      // 在下一个 tick 重新聚焦并设置光标位置
+      requestAnimationFrame(() => {
+        textarea.focus();
+        const newCursorPos = start + text.length;
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      });
+    },
+  });
+}
+
 const quickActions = [
   { label: '装备', icon: '🛡️', command: '__equipment__' },
   { label: '储物袋', icon: '🎒', command: '__backpack__' },
@@ -20,6 +52,12 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const busyState = character.busyState;
+
+  // 注册光标处插入文本的实现
+  useEffect(() => {
+    registerInsertTextAtCursor(textareaRef, setInputValue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 更新忙碌状态倒计时
   useEffect(() => {

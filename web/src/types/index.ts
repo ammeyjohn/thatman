@@ -118,6 +118,9 @@ export interface ChatMessage {
   gameDate?: string;
   gameShichen?: string;
   location?: string;
+  weather?: string;
+  weatherDesc?: string;
+  spiritTide?: boolean;
   entities?: Entity[];
 }
 

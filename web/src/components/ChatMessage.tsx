@@ -64,7 +64,7 @@ interface ChatMessageProps {
 }
 
 export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
-  const { deleteMessage, editMessage, regenerateMessage, isLoading, setInputValue } = useChatStore();
+  const { deleteMessage, editMessage, regenerateMessage, isLoading, insertTextAtCursor } = useChatStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [copied, setCopied] = useState(false);
@@ -126,9 +126,9 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     regenerateMessage(message.id);
   };
 
-  // 处理实体点击：将实体名称填入输入框
+  // 处理实体点击：将实体名称插入到输入框光标处
   const handleEntityClick = (entityName: string) => {
-    setInputValue(entityName);
+    insertTextAtCursor(entityName);
   };
 
   if (message.type === 'system') {
