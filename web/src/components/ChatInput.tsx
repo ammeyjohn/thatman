@@ -97,18 +97,28 @@ export function ChatInput() {
       )}
 
       {/* Quick Actions */}
-      <div data-name="quick-actions" className="flex gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide">
-        {quickActions.map((action) => (
-          <button
-            key={action.label}
-            onClick={() => handleQuickAction(action.command)}
-            disabled={isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2f2f]/50 hover:bg-[#2d5a5a]/30 border border-[#2d5a5a]/30 hover:border-[#3d7a7a]/50 rounded-full transition-all duration-200 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span className="text-sm">{action.icon}</span>
-            <span className="text-xs text-[#a0c0c0] hover:text-[#e8e4dc]">{action.label}</span>
-          </button>
-        ))}
+      <div data-name="quick-actions" className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+          {quickActions.map((action) => (
+            <button
+              key={action.label}
+              onClick={() => handleQuickAction(action.command)}
+              disabled={isLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a2f2f]/50 hover:bg-[#2d5a5a]/30 border border-[#2d5a5a]/30 hover:border-[#3d7a7a]/50 rounded-full transition-all duration-200 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="text-sm">{action.icon}</span>
+              <span className="text-xs text-[#a0c0c0] hover:text-[#e8e4dc]">{action.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Stream Stats - 紧凑展示在右侧 */}
+        {isLoading && (
+          <div data-name="stream-stats" className="flex items-center gap-3 text-xs text-[#5a7a7a] flex-shrink-0">
+            <span className="whitespace-nowrap">{streamStats.tokensPerSecond.toFixed(1)} t/s</span>
+            <span className="whitespace-nowrap">{contextPercent}% ctx</span>
+          </div>
+        )}
       </div>
 
       {/* Input Area */}
@@ -159,18 +169,7 @@ export function ChatInput() {
         )}
       </div>
 
-      {/* Stream Stats */}
-      {isLoading && (
-        <div data-name="stream-stats" className="flex items-center justify-center gap-6 mt-3 text-xs text-[#5a7a7a]">
-          <span>
-            Context: {streamStats.contextTokens}/{streamStats.contextMax} ({contextPercent}%)
-          </span>
-          <span>
-            Output: {streamStats.outputTokens}/{streamStats.outputMax === null ? '∞' : streamStats.outputMax}
-          </span>
-          <span>{streamStats.tokensPerSecond.toFixed(1)} t/s</span>
-        </div>
-      )}
+
 
       <BackpackDialog open={backpackOpen} onClose={() => setBackpackOpen(false)} />
       <EquipmentDialog open={equipmentOpen} onClose={() => setEquipmentOpen(false)} />

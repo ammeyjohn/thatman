@@ -839,6 +839,7 @@ class GMStorage:
         game_date: Optional[str] = None,
         game_shichen: Optional[str] = None,
         location: Optional[str] = None,
+        doc_id: Optional[str] = None,
     ) -> dict:
         """
         保存单条聊天消息到 thatman_chat_history
@@ -854,12 +855,14 @@ class GMStorage:
             game_date: 游戏日期，如"天元三千六百年·正月初一"
             game_shichen: 游戏时辰，如"卯时·清晨"
             location: 当前地点
+            doc_id: 可选，指定文档 ID，不传则自动生成
 
         Returns:
             CouchDB 写入响应，失败返回空字典
         """
         try:
-            doc_id = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}"
+            if not doc_id:
+                doc_id = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}"
             doc = {
                 "_id": doc_id,
                 "uid": uid,
@@ -937,6 +940,44 @@ class GMStorage:
         except Exception as e:
             error_log(f"获取聊天历史异常: uid={uid}, 错误: {e}")
             return []
+
+    def delete_chat_message(self, uid: str, message_id: str) -> bool:
+        """
+        删除单条聊天消息
+
+        Args:
+            uid: 玩家唯一标识
+            message_id: 消息文档ID（对应 CouchDB 的 _id）
+
+        Returns:
+            True 表示删除成功，False 表示失败
+        """
+        try:
+            # 先查询该消息，确认存在且属于该用户
+            resp = self._couch_request("GET", f"/{self._db_chat_history}/{message_id}")
+            if resp.status_code != 200:
+                warn_log(f"查询消息失败: uid={uid}, message_id={message_id}, 状态码: {resp.status_code}")
+                return False
+
+            doc = resp.json()
+            if doc.get("uid") != uid:
+                warn_log(f"消息不属于该用户: uid={uid}, message_id={message_id}")
+                return False
+
+            rev = doc.get("_rev")
+            del_resp = self._couch_request(
+                "DELETE",
+                f"/{self._db_chat_history}/{message_id}?rev={rev}",
+            )
+            if del_resp.status_code in (200, 202):
+                info_log(f"删除聊天消息成功: uid={uid}, message_id={message_id}")
+                return True
+            else:
+                warn_log(f"删除聊天消息失败: uid={uid}, message_id={message_id}, 状态码: {del_resp.status_code}")
+                return False
+        except Exception as e:
+            error_log(f"删除聊天消息异常: uid={uid}, message_id={message_id}, 错误: {e}")
+            return False
 
     def clear_chat_history(self, uid: str) -> bool:
         """

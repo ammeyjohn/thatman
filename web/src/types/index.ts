@@ -97,6 +97,12 @@ export interface WorldEvent {
   type: 'normal' | 'important' | 'urgent';
 }
 
+export interface Entity {
+  name: string;
+  type: 'character' | 'place' | 'weapon' | 'technique' | 'item';
+  desc: string;
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'player' | 'npc' | 'system';
@@ -112,6 +118,7 @@ export interface ChatMessage {
   gameDate?: string;
   gameShichen?: string;
   location?: string;
+  entities?: Entity[];
 }
 
 // 游戏响应JSON结构

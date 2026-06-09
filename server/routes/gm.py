@@ -153,6 +153,7 @@ def gm_chat():
     session_history = data.get('session_history', [])
     req_type = data.get('req_type', 'chat')
     stream = data.get('stream', False)
+    message_id = data.get('message_id', '')
 
     debug_log(f"收到 GM 请求 - req_type={req_type}, uid={uid}, current_area={current_area}, stream={stream}")
     debug_log(f"user_input: {user_input}")
@@ -190,6 +191,7 @@ def gm_chat():
             game_date=time_loc["game_date"],
             game_shichen=time_loc["game_shichen"],
             location=time_loc["location"],
+            doc_id=message_id or None,
         )
     except Exception as e:
         error_log(f"保存用户聊天消息失败: {e}")
@@ -228,12 +230,13 @@ def gm_chat():
                                     pass
 
                 # 流式结束后保存 NPC 回复到聊天历史
+                npc_message_id = None
                 if dialog_text or result_data:
                     try:
                         storage = _get_storage()
                         now_ms = int(time_module.time() * 1000)
                         time_loc = _get_game_time_and_location(current_area)
-                        storage.save_chat_message(
+                        save_resp = storage.save_chat_message(
                             uid=uid,
                             sender="npc",
                             content=result_data.get('dialog', dialog_text),
@@ -245,8 +248,13 @@ def gm_chat():
                             game_shichen=time_loc["game_shichen"],
                             location=time_loc["location"],
                         )
+                        npc_message_id = save_resp.get('id') if save_resp else None
                     except Exception as e:
                         error_log(f"流式保存NPC聊天消息失败: {e}")
+
+                # 返回 NPC 消息 id，供前端同步
+                if npc_message_id:
+                    yield f"event: saved\ndata: {json.dumps({'npc_message_id': npc_message_id}, ensure_ascii=False)}\n\n"
 
             return Response(generate_stream(), mimetype='text/event-stream',
                           headers={
@@ -279,7 +287,7 @@ def gm_chat():
             storage = _get_storage()
             now_ms = int(time_module.time() * 1000)
             time_loc = _get_game_time_and_location(current_area)
-            storage.save_chat_message(
+            save_resp = storage.save_chat_message(
                 uid=uid,
                 sender="npc",
                 content=response_data.get('dialog', ''),
@@ -291,6 +299,8 @@ def gm_chat():
                 game_shichen=time_loc["game_shichen"],
                 location=time_loc["location"],
             )
+            if save_resp and save_resp.get('id'):
+                response_data['npc_message_id'] = save_resp['id']
         except Exception as e:
             error_log(f"保存NPC聊天消息失败: {e}")
 
@@ -346,6 +356,60 @@ def get_chat_history():
         })
     except Exception as e:
         error_log(f"获取聊天历史失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/chat/history/<message_id>', methods=['DELETE'])
+def delete_chat_message(message_id: str):
+    """
+    删除单条聊天消息
+
+    路径参数:
+        message_id: 消息文档ID（必填）
+    查询参数:
+        uid: 玩家唯一ID（必填）
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if not message_id:
+        return jsonify({
+            'error': {
+                'message': 'message_id 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        success = storage.delete_chat_message(uid, message_id)
+        if success:
+            return jsonify({'success': True, 'message': '消息已删除'})
+        else:
+            return jsonify({
+                'error': {
+                    'message': '删除消息失败',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+    except Exception as e:
+        error_log(f"删除聊天消息失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

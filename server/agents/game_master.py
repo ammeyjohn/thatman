@@ -1029,6 +1029,7 @@ class GameMaster:
                 # 发送完整结果事件
                 yield self._sse_event("result", {
                     "dialog": resp_json.get("dialog", ""),
+                    "entities": resp_json.get("entities", []),
                     "actions": resp_json.get("actions", []),
                     "player_update": resp_json.get("player_update", {}),
                     "ui_config": resp_json.get("ui_config", {}),

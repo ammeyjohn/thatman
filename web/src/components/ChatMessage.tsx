@@ -1,10 +1,37 @@
 import { useState } from 'react';
-import type { ChatMessage as ChatMessageType } from '../types';
+import type { ChatMessage as ChatMessageType, Entity } from '../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Copy, Pencil, Trash2, RefreshCw, Check, Braces } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { ConfirmDialog } from './ConfirmDialog';
+
+// 实体类型与颜色映射（基于 DESIGN.md 色彩语义）
+const ENTITY_COLORS: Record<Entity['type'], string> = {
+  character: '#c9a227',  // 道韵金 - 传承、珍贵、上古
+  place: '#5ab8b8',      // 灵玉青 - 灵气、生机、平静
+  weapon: '#E74C3C',     // 丹火红 - 危险、冲突
+  technique: '#9B59B6',  // 毒藤紫 - 神秘、未知
+  item: '#C9A962',       // 古铜金 - 传承、珍贵
+};
+
+// 实体类型与图标映射
+const ENTITY_ICONS: Record<Entity['type'], string> = {
+  character: '👤',
+  place: '🗺️',
+  weapon: '🗡️',
+  technique: '📜',
+  item: '💎',
+};
+
+// 实体类型中文名
+const ENTITY_TYPE_LABELS: Record<Entity['type'], string> = {
+  character: '人物',
+  place: '地点',
+  weapon: '法宝',
+  technique: '功法',
+  item: '物品',
+};
 
 // 处理纯文本换行：将换行符转换为 <br />
 const formatTextWithLineBreaks = (text: string): string => {
@@ -23,7 +50,7 @@ interface ChatMessageProps {
 }
 
 export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
-  const { deleteMessage, editMessage, regenerateMessage, isLoading } = useChatStore();
+  const { deleteMessage, editMessage, regenerateMessage, isLoading, addMessage } = useChatStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [copied, setCopied] = useState(false);
@@ -49,8 +76,8 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     setShowDeleteDialog(true);
   };
 
-  const handleConfirmDelete = () => {
-    deleteMessage(message.id);
+  const handleConfirmDelete = async () => {
+    await deleteMessage(message.id);
     setShowDeleteDialog(false);
   };
 
@@ -85,6 +112,34 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     regenerateMessage(message.id);
   };
 
+  // 处理实体链接点击
+  const handleEntityClick = (entityType: string, entityName: string) => {
+    // 从当前消息的 entities 数组中查找匹配的实体
+    const entity = message.entities?.find(
+      (e) => e.name === entityName && e.type === entityType
+    );
+
+    if (entity) {
+      // 在聊天框中添加一条系统消息展示实体详情
+      const icon = ENTITY_ICONS[entity.type] || '◈';
+      const typeLabel = ENTITY_TYPE_LABELS[entity.type] || entity.type;
+      addMessage({
+        sender: 'system',
+        content: `${icon} **${entity.name}**  ·${typeLabel}·\n\n${entity.desc}`,
+        type: 'event',
+      });
+    } else {
+      // 没有找到实体详情，仅显示名称
+      const icon = ENTITY_ICONS[entityType as Entity['type']] || '◈';
+      const typeLabel = ENTITY_TYPE_LABELS[entityType as Entity['type']] || entityType;
+      addMessage({
+        sender: 'system',
+        content: `${icon} **${entityName}**  ·${typeLabel}·`,
+        type: 'event',
+      });
+    }
+  };
+
   if (message.type === 'system') {
     return (
       <div className="flex justify-center my-4">
@@ -99,7 +154,17 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     return (
       <div className="flex justify-center my-4">
         <div className="px-4 py-3 bg-gradient-to-r from-[#c9a227]/20 via-[#c9a227]/10 to-[#c9a227]/20 border border-[#c9a227]/40 rounded-lg max-w-[80%]">
-          <div className="text-[#c9a227] text-sm text-center">{message.content}</div>
+          <div className="text-[#c9a227] text-sm text-center markdown-body">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="text-[#f0d878]">{children}</strong>,
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
         </div>
       </div>
     );
@@ -243,6 +308,51 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                     remarkPlugins={[remarkGfm]}
                     components={{
                       p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                      a: ({ href, children }) => {
+                        // 处理实体链接 entity:类型/名称
+                        if (href && href.startsWith('entity:')) {
+                          const entityPath = href.slice(7); // 去掉 "entity:" 前缀
+                          const slashIndex = entityPath.indexOf('/');
+                          const entityType = slashIndex > 0 ? entityPath.slice(0, slashIndex) : '';
+                          const entityName = slashIndex > 0 ? entityPath.slice(slashIndex + 1) : entityPath;
+                          const color = ENTITY_COLORS[entityType as Entity['type']] || '#3d9a9a';
+
+                          return (
+                            <span
+                              className="cursor-pointer underline decoration-dotted underline-offset-2 transition-all duration-200 hover:underline-solid hover:brightness-125"
+                              style={{
+                                color,
+                                textShadow: `0 0 6px ${color}40`,
+                              }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                handleEntityClick(entityType, entityName);
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleEntityClick(entityType, entityName);
+                                }
+                              }}
+                            >
+                              {children}
+                            </span>
+                          );
+                        }
+                        // 普通链接
+                        return (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#3d9a9a] hover:underline transition-all duration-200"
+                          >
+                            {children}
+                          </a>
+                        );
+                      },
                     }}
                   >
                     {formatTextWithLineBreaks(message.content)}

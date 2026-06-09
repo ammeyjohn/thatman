@@ -1,13 +1,13 @@
 import { create } from 'zustand';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, Entity } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 import { useGameStore } from './gameStore';
 
-let messageIdCounter = 0;
 const generateId = () => {
-  messageIdCounter += 1;
-  return `${Date.now()}-${messageIdCounter}`;
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 10);
+  return `msg_${timestamp}_${random}`;
 };
 
 export interface StreamStats {
@@ -36,13 +36,14 @@ interface ChatState {
   updateLastMessageActions: (actions: string[]) => void;
   updateLastMessageParsedJSON: (parsedJSON: Record<string, unknown>) => void;
   updateLastMessageRawJSON: (rawJSON: string) => void;
+  updateLastMessageEntities: (entities: Entity[]) => void;
   setInputValue: (value: string) => void;
   setStreamingContent: (content: string) => void;
   clearMessages: () => void;
   sendMessage: (content: string) => Promise<void>;
   stopGeneration: () => void;
   resetStreamStats: () => void;
-  deleteMessage: (messageId: string) => void;
+  deleteMessage: (messageId: string) => Promise<void>;
   editMessage: (messageId: string, newContent: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
   loadChatHistory: () => Promise<void>;
@@ -103,6 +104,42 @@ function parseHistoryDoc(doc: Record<string, unknown>): ChatMessage {
     baseMessage.actions = doc.actions as string[];
   }
 
+  // 如果数据库中已有独立的 entities 字段，也保留
+  if (!baseMessage.entities && Array.isArray(doc.entities)) {
+    const rawEntities = doc.entities as unknown[];
+    baseMessage.entities = rawEntities
+      .filter((e): e is Record<string, unknown> =>
+        typeof e === 'object' && e !== null
+        && typeof (e as Record<string, unknown>).name === 'string'
+        && typeof (e as Record<string, unknown>).type === 'string'
+        && typeof (e as Record<string, unknown>).desc === 'string'
+      )
+      .map((e) => ({
+        name: e.name as string,
+        type: e.type as Entity['type'],
+        desc: e.desc as string,
+      }));
+  }
+
+  // 如果从 JSON 解析出了 parsedJSON，尝试从中提取 entities
+  if (!baseMessage.entities && baseMessage.parsedJSON) {
+    const rawEntities = baseMessage.parsedJSON.entities;
+    if (Array.isArray(rawEntities)) {
+      baseMessage.entities = rawEntities
+        .filter((e): e is Record<string, unknown> =>
+          typeof e === 'object' && e !== null
+          && typeof (e as Record<string, unknown>).name === 'string'
+          && typeof (e as Record<string, unknown>).type === 'string'
+          && typeof (e as Record<string, unknown>).desc === 'string'
+        )
+        .map((e) => ({
+          name: e.name as string,
+          type: e.type as Entity['type'],
+          desc: e.desc as string,
+        }));
+    }
+  }
+
   return baseMessage;
 }
 
@@ -116,10 +153,12 @@ async function streamGmChat(
   sessionHistory: { role: string; content: string }[],
   signal: AbortSignal,
   onDialogDelta: (content: string) => void,
-  onResult: (result: { dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown> }) => void,
+  onResult: (result: { dialog: string; actions: string[]; player_update: Record<string, unknown>; ui_config: Record<string, unknown>; entities?: unknown[] }) => void,
   onError: (message: string) => void,
   onTimeAdvance?: (data: Record<string, unknown>) => void,
   onBusyState?: (data: Record<string, unknown>) => void,
+  onSaved?: (data: { npc_message_id: string }) => void,
+  userMessageId?: string,
 ): Promise<void> {
   const response = await fetch(`${config.API_BASE_URL}/gm/chat`, {
     method: 'POST',
@@ -131,6 +170,7 @@ async function streamGmChat(
       session_history: sessionHistory,
       req_type: 'chat',
       stream: true,
+      message_id: userMessageId,
     }),
     signal,
   });
@@ -184,6 +224,11 @@ async function streamGmChat(
               break;
             case 'busy_state':
               onBusyState?.(data);
+              break;
+            case 'saved':
+              if (data.npc_message_id) {
+                onSaved?.(data);
+              }
               break;
             case 'done':
               // 流结束
@@ -352,32 +397,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages };
     }),
 
+  updateLastMessageEntities: (entities) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        lastMessage.entities = entities;
+      }
+      return { messages };
+    }),
+
   setInputValue: (value) => set({ inputValue: value }),
 
   setStreamingContent: (content) => set({ streamingContent: content }),
 
   clearMessages: () => set({ messages: [] }),
 
-  deleteMessage: (messageId: string) =>
-    set((state) => {
-      const messageIndex = state.messages.findIndex((m) => m.id === messageId);
-      if (messageIndex === -1) return { messages: state.messages };
+  deleteMessage: async (messageId: string) => {
+    const uid = getOrCreateUserId();
+    const state = get();
+    const messageIndex = state.messages.findIndex((m) => m.id === messageId);
+    if (messageIndex === -1) return;
 
-      const message = state.messages[messageIndex];
-      const messagesToDelete = [messageId];
+    const message = state.messages[messageIndex];
+    const messagesToDelete = [messageId];
 
-      // 如果删除的是用户消息，同时删除对应的 AI 回复（下一条消息）
-      if (message.sender === 'player') {
-        const nextMessage = state.messages[messageIndex + 1];
-        if (nextMessage && nextMessage.sender === 'npc') {
-          messagesToDelete.push(nextMessage.id);
-        }
+    // 如果删除的是用户消息，同时删除对应的 AI 回复（下一条消息）
+    if (message.sender === 'player') {
+      const nextMessage = state.messages[messageIndex + 1];
+      if (nextMessage && nextMessage.sender === 'npc') {
+        messagesToDelete.push(nextMessage.id);
       }
+    }
 
-      return {
-        messages: state.messages.filter((m) => !messagesToDelete.includes(m.id)),
-      };
-    }),
+    // 调用后端 API 从数据库中删除
+    if (uid) {
+      try {
+        for (const id of messagesToDelete) {
+          const response = await fetch(
+            `${config.API_BASE_URL}/chat/history/${encodeURIComponent(id)}?uid=${encodeURIComponent(uid)}`,
+            {
+              method: 'DELETE',
+              headers: getAuthHeaders(),
+            }
+          );
+          if (!response.ok) {
+            console.error('删除消息失败:', response.status);
+          }
+        }
+      } catch (error) {
+        console.error('删除消息请求失败:', error);
+      }
+    }
+
+    set((state) => ({
+      messages: state.messages.filter((m) => !messagesToDelete.includes(m.id)),
+    }));
+  },
 
   editMessage: (messageId: string, newContent: string) =>
     set((state) => ({
@@ -387,7 +463,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   regenerateMessage: async (messageId: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, resetStreamStats, deleteMessage } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, resetStreamStats, deleteMessage } = get();
 
     // 找到要重新生成的消息
     const messageIndex = messages.findIndex((m) => m.id === messageId);
@@ -397,7 +473,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const previousMessages = messages.slice(0, messageIndex);
 
     // 删除当前AI消息
-    deleteMessage(messageId);
+    await deleteMessage(messageId);
 
     // 重置统计信息
     resetStreamStats();
@@ -487,6 +563,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             updateLastMessageActions(actions);
           }
 
+          // 提取 entities
+          const rawEntities = Array.isArray(result.entities) ? result.entities : [];
+          const entities: Entity[] = rawEntities
+            .filter((e): e is Record<string, unknown> =>
+              typeof e === 'object' && e !== null
+              && typeof (e as Record<string, unknown>).name === 'string'
+              && typeof (e as Record<string, unknown>).type === 'string'
+              && typeof (e as Record<string, unknown>).desc === 'string'
+            )
+            .map((e) => ({
+              name: e.name as string,
+              type: e.type as Entity['type'],
+              desc: e.desc as string,
+            }));
+          if (entities.length > 0) {
+            updateLastMessageEntities(entities);
+          }
+
           updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
           updateLastMessageRawJSON(JSON.stringify(result, null, 2));
 
@@ -522,6 +616,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (data) => {
           const gameStore = useGameStore.getState();
           gameStore.handleBusyState(data as unknown as import('../types').BusyState);
+        },
+        // onSaved: 收到后端保存的 NPC 消息 id，更新本地消息 id
+        (data) => {
+          set((state) => {
+            const messages = [...state.messages];
+            const lastIndex = messages.length - 1;
+            if (lastIndex >= 0 && messages[lastIndex].sender === 'npc') {
+              messages[lastIndex] = { ...messages[lastIndex], id: data.npc_message_id };
+            }
+            return { messages };
+          });
         },
       );
 
@@ -663,10 +768,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, resetStreamStats } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, resetStreamStats } = get();
 
-    // 添加用户消息
-    addMessage({
+    // 添加用户消息，并记录其 id
+    const userMessageId = addMessage({
       sender: 'player',
       content: content,
       type: 'normal',
@@ -756,6 +861,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             updateLastMessageActions(actions);
           }
 
+          // 提取 entities
+          const rawEntities = Array.isArray(result.entities) ? result.entities : [];
+          const entities: Entity[] = rawEntities
+            .filter((e): e is Record<string, unknown> =>
+              typeof e === 'object' && e !== null
+              && typeof (e as Record<string, unknown>).name === 'string'
+              && typeof (e as Record<string, unknown>).type === 'string'
+              && typeof (e as Record<string, unknown>).desc === 'string'
+            )
+            .map((e) => ({
+              name: e.name as string,
+              type: e.type as Entity['type'],
+              desc: e.desc as string,
+            }));
+          if (entities.length > 0) {
+            updateLastMessageEntities(entities);
+          }
+
           // 保存解析后的 JSON
           updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
           updateLastMessageRawJSON(JSON.stringify(result, null, 2));
@@ -795,6 +918,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const gameStore = useGameStore.getState();
           gameStore.handleBusyState(data as unknown as import('../types').BusyState);
         },
+        // onSaved: 收到后端保存的 NPC 消息 id，更新本地消息 id
+        (data) => {
+          set((state) => {
+            const messages = [...state.messages];
+            const lastIndex = messages.length - 1;
+            if (lastIndex >= 0 && messages[lastIndex].sender === 'npc') {
+              messages[lastIndex] = { ...messages[lastIndex], id: data.npc_message_id };
+            }
+            return { messages };
+          });
+        },
+        userMessageId,
       );
 
     } catch (error) {
