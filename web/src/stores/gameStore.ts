@@ -491,11 +491,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!uid) return;
 
     try {
-      const response = await fetch(`${config.API_BASE_URL}/v1/gm/inventory?uid=${encodeURIComponent(uid)}`, {
+      const response = await fetch(`${config.API_BASE_URL}/gm/inventory?uid=${encodeURIComponent(uid)}`, {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {
-        console.error('获取背包信息失败:', response.status);
+        console.error('获取储物袋信息失败:', response.status);
         return;
       }
 
@@ -504,10 +504,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         set((state) => ({
           character: { ...state.character, inventory: data.inventory },
         }));
-        console.log('[Inventory] 背包信息加载成功');
+        console.log('[Inventory] 储物袋信息加载成功');
       }
     } catch (error) {
-      console.error('获取背包信息失败:', error);
+      console.error('获取储物袋信息失败:', error);
     }
   },
 
@@ -516,7 +516,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!uid) return;
 
     try {
-      const response = await fetch(`${config.API_BASE_URL}/v1/gm/equipment?uid=${encodeURIComponent(uid)}`, {
+      const response = await fetch(`${config.API_BASE_URL}/gm/equipment?uid=${encodeURIComponent(uid)}`, {
         headers: getAuthHeaders(),
       });
       if (!response.ok) {

@@ -122,6 +122,7 @@ class HindsightMemoryStore:
             base_url=self.base_url,
             headers=self._headers,
             timeout=httpx.Timeout(timeout),
+            limits=httpx.Limits(max_keepalive_connections=0),
         )
 
         # 确保 bank 存在

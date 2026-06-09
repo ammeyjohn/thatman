@@ -441,7 +441,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               headers: getAuthHeaders(),
             }
           );
-          if (!response.ok) {
+          if (!response.ok && response.status !== 404) {
             console.error('删除消息失败:', response.status);
           }
         }
@@ -468,6 +468,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 找到要重新生成的消息
     const messageIndex = messages.findIndex((m) => m.id === messageId);
     if (messageIndex === -1) return;
+
+    // 先中止当前正在进行的请求
+    const currentAbortController = get().abortController;
+    if (currentAbortController) {
+      currentAbortController.abort();
+      set({ abortController: null });
+    }
 
     // 获取该消息之前的所有消息
     const previousMessages = messages.slice(0, messageIndex);

@@ -76,6 +76,7 @@ class OpenAIEmbeddingClient:
                 "Content-Type": "application/json",
             },
             timeout=httpx.Timeout(60.0),
+            limits=httpx.Limits(max_keepalive_connections=0),
         )
         info_log(f"OpenAI Embedding 客户端初始化: model={model_name}, api_base={api_base}")
 
@@ -207,6 +208,7 @@ class GMStorage:
             auth=(self._couch_user, self._couch_password),
             headers={"Content-Type": "application/json"},
             timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=0),
         )
 
         # 确保 CouchDB 数据库存在
@@ -941,7 +943,7 @@ class GMStorage:
             error_log(f"获取聊天历史异常: uid={uid}, 错误: {e}")
             return []
 
-    def delete_chat_message(self, uid: str, message_id: str) -> bool:
+    def delete_chat_message(self, uid: str, message_id: str):
         """
         删除单条聊天消息
 
@@ -950,11 +952,17 @@ class GMStorage:
             message_id: 消息文档ID（对应 CouchDB 的 _id）
 
         Returns:
-            True 表示删除成功，False 表示失败
+            True 表示删除成功
+            "not_found" 表示消息不存在
+            "forbidden" 表示消息不属于该用户
+            False 表示其他失败
         """
         try:
             # 先查询该消息，确认存在且属于该用户
             resp = self._couch_request("GET", f"/{self._db_chat_history}/{message_id}")
+            if resp.status_code == 404:
+                warn_log(f"查询消息失败: uid={uid}, message_id={message_id}, 状态码: 404")
+                return "not_found"
             if resp.status_code != 200:
                 warn_log(f"查询消息失败: uid={uid}, message_id={message_id}, 状态码: {resp.status_code}")
                 return False
@@ -962,7 +970,7 @@ class GMStorage:
             doc = resp.json()
             if doc.get("uid") != uid:
                 warn_log(f"消息不属于该用户: uid={uid}, message_id={message_id}")
-                return False
+                return "forbidden"
 
             rev = doc.get("_rev")
             del_resp = self._couch_request(

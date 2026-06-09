@@ -7,7 +7,7 @@ import { EquipmentDialog } from './EquipmentDialog';
 
 const quickActions = [
   { label: '装备', icon: '🛡️', command: '__equipment__' },
-  { label: '背包', icon: '🎒', command: '__backpack__' },
+  { label: '储物袋', icon: '🎒', command: '__backpack__' },
 ];
 
 export function ChatInput() {

@@ -15,23 +15,7 @@ const ENTITY_COLORS: Record<Entity['type'], string> = {
   item: '#C9A962',       // 古铜金 - 传承、珍贵
 };
 
-// 实体类型与图标映射
-const ENTITY_ICONS: Record<Entity['type'], string> = {
-  character: '👤',
-  place: '🗺️',
-  weapon: '🗡️',
-  technique: '📜',
-  item: '💎',
-};
 
-// 实体类型中文名
-const ENTITY_TYPE_LABELS: Record<Entity['type'], string> = {
-  character: '人物',
-  place: '地点',
-  weapon: '法宝',
-  technique: '功法',
-  item: '物品',
-};
 
 // 处理纯文本换行：将换行符转换为 <br />
 const formatTextWithLineBreaks = (text: string): string => {
@@ -44,13 +28,43 @@ const formatTextWithLineBreaks = (text: string): string => {
   return text.replace(/\n/g, '  \n');
 };
 
+/**
+ * 在文本节点中查找实体名称并分割为可高亮部分
+ */
+const highlightEntitiesInText = (
+  value: string,
+  entities: Entity[]
+): Array<{ text: string; entity?: Entity }> => {
+  if (!entities || entities.length === 0) return [{ text: value }];
+
+  // 按名称长度降序排列，优先匹配更长的名称
+  const sorted = [...entities].sort((a, b) => b.name.length - a.name.length);
+
+  // 构建匹配正则：所有实体名称用 | 连接
+  const pattern = sorted
+    .map((e) => e.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  if (!pattern) return [{ text: value }];
+
+  const regex = new RegExp(`(${pattern})`, 'g');
+  const parts = value.split(regex);
+  const result: Array<{ text: string; entity?: Entity }> = [];
+
+  for (const part of parts) {
+    const entity = sorted.find((e) => e.name === part);
+    result.push({ text: part, entity });
+  }
+
+  return result;
+};
+
 interface ChatMessageProps {
   message: ChatMessageType;
   onOptionClick?: (option: string) => void;
 }
 
 export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
-  const { deleteMessage, editMessage, regenerateMessage, isLoading, addMessage } = useChatStore();
+  const { deleteMessage, editMessage, regenerateMessage, isLoading, setInputValue } = useChatStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [copied, setCopied] = useState(false);
@@ -112,32 +126,9 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     regenerateMessage(message.id);
   };
 
-  // 处理实体链接点击
-  const handleEntityClick = (entityType: string, entityName: string) => {
-    // 从当前消息的 entities 数组中查找匹配的实体
-    const entity = message.entities?.find(
-      (e) => e.name === entityName && e.type === entityType
-    );
-
-    if (entity) {
-      // 在聊天框中添加一条系统消息展示实体详情
-      const icon = ENTITY_ICONS[entity.type] || '◈';
-      const typeLabel = ENTITY_TYPE_LABELS[entity.type] || entity.type;
-      addMessage({
-        sender: 'system',
-        content: `${icon} **${entity.name}**  ·${typeLabel}·\n\n${entity.desc}`,
-        type: 'event',
-      });
-    } else {
-      // 没有找到实体详情，仅显示名称
-      const icon = ENTITY_ICONS[entityType as Entity['type']] || '◈';
-      const typeLabel = ENTITY_TYPE_LABELS[entityType as Entity['type']] || entityType;
-      addMessage({
-        sender: 'system',
-        content: `${icon} **${entityName}**  ·${typeLabel}·`,
-        type: 'event',
-      });
-    }
+  // 处理实体点击：将实体名称填入输入框
+  const handleEntityClick = (entityName: string) => {
+    setInputValue(entityName);
   };
 
   if (message.type === 'system') {
@@ -304,45 +295,59 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                 />
               ) : (
                 <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                      a: ({ href, children }) => {
-                        // 处理实体链接 entity:类型/名称
-                        if (href && href.startsWith('entity:')) {
-                          const entityPath = href.slice(7); // 去掉 "entity:" 前缀
-                          const slashIndex = entityPath.indexOf('/');
-                          const entityType = slashIndex > 0 ? entityPath.slice(0, slashIndex) : '';
-                          const entityName = slashIndex > 0 ? entityPath.slice(slashIndex + 1) : entityPath;
-                          const color = ENTITY_COLORS[entityType as Entity['type']] || '#3d9a9a';
-
+                  {message.entities && message.entities.length > 0 ? (
+                    // 有实体：直接渲染高亮文本
+                    <div className="text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
+                      {highlightEntitiesInText(message.content, message.entities).map((part, i) => {
+                        if (part.entity) {
+                          const color = ENTITY_COLORS[part.entity.type] || '#3d9a9a';
                           return (
                             <span
-                              className="cursor-pointer underline decoration-dotted underline-offset-2 transition-all duration-200 hover:underline-solid hover:brightness-125"
+                              key={i}
+                              className="cursor-pointer rounded-sm px-0.5 transition-all duration-200 hover:brightness-130"
                               style={{
                                 color,
                                 textShadow: `0 0 6px ${color}40`,
                               }}
                               onClick={(e) => {
                                 e.preventDefault();
-                                handleEntityClick(entityType, entityName);
+                                e.stopPropagation();
+                                handleEntityClick(part.entity!.name);
                               }}
                               role="button"
                               tabIndex={0}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
                                   e.preventDefault();
-                                  handleEntityClick(entityType, entityName);
+                                  e.stopPropagation();
+                                  handleEntityClick(part.entity!.name);
                                 }
                               }}
                             >
-                              {children}
+                              {part.text}
                             </span>
                           );
                         }
-                        // 普通链接
+                        // 普通文本：处理换行
                         return (
+                          <span key={i}>
+                            {part.text.split('\n').map((line, j) => (
+                              <span key={j}>
+                                {j > 0 && <br />}
+                                {line}
+                              </span>
+                            ))}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    // 无实体：使用 ReactMarkdown 渲染
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        a: ({ href, children }) => (
                           <a
                             href={href}
                             target="_blank"
@@ -351,12 +356,12 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                           >
                             {children}
                           </a>
-                        );
-                      },
-                    }}
-                  >
-                    {formatTextWithLineBreaks(message.content)}
-                  </ReactMarkdown>
+                        ),
+                      }}
+                    >
+                      {formatTextWithLineBreaks(message.content)}
+                    </ReactMarkdown>
+                  )}
                   {isLoading && message.sender === 'npc' && (
                     <span className="inline-block w-2 h-4 bg-[#3d9a9a] animate-pulse ml-1 align-middle" />
                   )}

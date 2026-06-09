@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Generator
 
+import httpx
 import yaml
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -99,6 +100,11 @@ class GameMaster:
         max_tokens = int(os.getenv("GM_CHAT_MAX_TOKENS", chat_cfg.get("max_tokens", 4096)))
 
         try:
+            # 禁用 HTTP 连接池 keepalive，避免长时间空闲后复用已断开的连接导致挂起
+            chat_http_client = httpx.Client(
+                limits=httpx.Limits(max_keepalive_connections=0),
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+            )
             self.chat_model = ChatOpenAI(
                 base_url=api_base,
                 api_key=api_key,
@@ -106,6 +112,8 @@ class GameMaster:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 model_kwargs={"response_format": {"type": "json_object"}},
+                request_timeout=120,
+                http_client=chat_http_client,
             )
             info_log(f"聊天模型初始化成功 - 模型: {model_name}, API: {api_base}")
         except Exception as e:
@@ -129,6 +137,11 @@ class GameMaster:
         max_tokens = int(os.getenv("GM_WORLD_MAX_TOKENS", world_cfg.get("max_tokens", 8192)))
 
         try:
+            # 禁用 HTTP 连接池 keepalive，避免长时间空闲后复用已断开的连接导致挂起
+            world_http_client = httpx.Client(
+                limits=httpx.Limits(max_keepalive_connections=0),
+                timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0),
+            )
             self.world_model = ChatOpenAI(
                 base_url=api_base,
                 api_key=api_key,
@@ -136,6 +149,8 @@ class GameMaster:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 model_kwargs={"response_format": {"type": "json_object"}},
+                request_timeout=180,
+                http_client=world_http_client,
             )
             info_log(f"世界模型初始化成功 - 模型: {model_name}, API: {api_base}")
         except Exception as e:
@@ -740,7 +755,7 @@ class GameMaster:
         "birth_date": "出生日期",
         "lifespan": "寿元",
         "equipment": "装备",
-        "inventory": "背包",
+        "inventory": "储物袋",
     }
 
     # 需要排除的 CouchDB 内部字段

@@ -397,9 +397,25 @@ def delete_chat_message(message_id: str):
 
     try:
         storage = _get_storage()
-        success = storage.delete_chat_message(uid, message_id)
-        if success:
+        result = storage.delete_chat_message(uid, message_id)
+        if result is True:
             return jsonify({'success': True, 'message': '消息已删除'})
+        elif result == "not_found":
+            return jsonify({
+                'error': {
+                    'message': '消息不存在',
+                    'type': 'not_found_error',
+                    'code': 'not_found'
+                }
+            }), 404
+        elif result == "forbidden":
+            return jsonify({
+                'error': {
+                    'message': '无权删除该消息',
+                    'type': 'forbidden_error',
+                    'code': 'forbidden'
+                }
+            }), 403
         else:
             return jsonify({
                 'error': {

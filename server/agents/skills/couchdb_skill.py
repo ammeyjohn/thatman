@@ -111,6 +111,7 @@ def _get_couch_client() -> Optional[httpx.Client]:
             auth=(user, password),
             headers={"Content-Type": "application/json"},
             timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=0),
         )
         # 测试连接
         resp = _couch_client.get("/")

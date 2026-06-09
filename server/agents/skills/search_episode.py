@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 try:
+    import httpx
     import torch
     from transformers import AutoModel, AutoTokenizer
     from qdrant_client import QdrantClient
@@ -198,7 +199,11 @@ def _get_qdrant_client() -> Optional[Any]:
     global _qdrant_client
     if _qdrant_client is None:
         try:
-            _qdrant_client = QdrantClient(url=DEFAULT_QDRANT_URL)
+            # 禁用 HTTP 连接池 keepalive，避免长时间空闲后复用已断开的连接导致挂起
+            _qdrant_client = QdrantClient(
+                url=DEFAULT_QDRANT_URL,
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
             # 测试连接
             _qdrant_client.get_collections()
             info_log(f"Qdrant 连接成功: {DEFAULT_QDRANT_URL}")
