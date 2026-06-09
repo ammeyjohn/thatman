@@ -556,6 +556,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         // onResult
         (result) => {
+          // 如果流式过程中没有收到 dialog_delta（如非 JSON 响应），用 result.dialog 填充内容
+          if (result.dialog) {
+            const { messages: currentMessages } = get();
+            const lastMsg = currentMessages[currentMessages.length - 1];
+            if (lastMsg && lastMsg.sender === 'npc' && !lastMsg.content) {
+              updateLastMessage(result.dialog);
+              set({ streamingContent: result.dialog });
+            }
+          }
+
           const actions = Array.isArray(result.actions)
             ? result.actions.filter((a): a is string => typeof a === 'string')
             : [];
@@ -853,6 +863,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         // onResult: 收到完整结果
         (result) => {
+          // 如果流式过程中没有收到 dialog_delta（如非 JSON 响应），用 result.dialog 填充内容
+          if (result.dialog) {
+            const { messages: currentMessages } = get();
+            const lastMsg = currentMessages[currentMessages.length - 1];
+            if (lastMsg && lastMsg.sender === 'npc' && !lastMsg.content) {
+              updateLastMessage(result.dialog);
+              set({ streamingContent: result.dialog });
+            }
+          }
+
           // 提取 actions
           const actions = Array.isArray(result.actions)
             ? result.actions.filter((a): a is string => typeof a === 'string')
