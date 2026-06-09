@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+import httpx
 import yaml
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -37,9 +38,13 @@ class LayoutGenerator:
         self.config = config
         self.storage = storage
 
-        # 加载布局生成模型
-        self.layout_model: Optional[ChatOpenAI] = None
-        self._init_layout_model()
+        # 保存布局生成模型配置（不创建常驻实例，避免 httpx.Client 线程安全问题）
+        layout_cfg = config.get("layout_model", {})
+        self._layout_api_base = os.getenv("GM_LAYOUT_API_BASE", layout_cfg.get("api_base", "http://localhost:7777/v1"))
+        self._layout_api_key = os.getenv("GM_LAYOUT_API_KEY", layout_cfg.get("api_key", "not-needed"))
+        self._layout_model_name = os.getenv("GM_LAYOUT_MODEL_NAME", layout_cfg.get("model_name", "Qwen3-Coder-Next-Q4"))
+        self._layout_temperature = float(os.getenv("GM_LAYOUT_TEMPERATURE", layout_cfg.get("temperature", 0.3)))
+        self._layout_max_tokens = int(os.getenv("GM_LAYOUT_MAX_TOKENS", layout_cfg.get("max_tokens", 4096)))
 
         # 加载布局生成 system prompt
         self.system_prompt: str = ""
@@ -47,29 +52,32 @@ class LayoutGenerator:
 
         info_log("LayoutGenerator 初始化完成")
 
-    def _init_layout_model(self) -> None:
-        """初始化布局生成模型"""
-        layout_cfg = self.config.get("layout_model", {})
+    def _create_layout_llm(self) -> ChatOpenAI:
+        """创建新的布局生成模型实例（每次请求创建，避免 httpx.Client 线程安全问题）"""
+        http_client = httpx.Client(
+            limits=httpx.Limits(max_keepalive_connections=0),
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+        )
+        llm = ChatOpenAI(
+            base_url=self._layout_api_base,
+            api_key=self._layout_api_key,
+            model=self._layout_model_name,
+            temperature=self._layout_temperature,
+            max_tokens=self._layout_max_tokens,
+            http_client=http_client,
+        )
+        llm._httpx_client = http_client
+        return llm
 
-        api_base = os.getenv("GM_LAYOUT_API_BASE", layout_cfg.get("api_base", "http://localhost:7777/v1"))
-        api_key = os.getenv("GM_LAYOUT_API_KEY", layout_cfg.get("api_key", "not-needed"))
-        model_name = os.getenv("GM_LAYOUT_MODEL_NAME", layout_cfg.get("model_name", "Qwen3-Coder-Next-Q4"))
-        temperature = float(os.getenv("GM_LAYOUT_TEMPERATURE", layout_cfg.get("temperature", 0.3)))
-        max_tokens = int(os.getenv("GM_LAYOUT_MAX_TOKENS", layout_cfg.get("max_tokens", 4096)))
-
+    def _close_llm(self, llm: ChatOpenAI) -> None:
+        """安全关闭 LLM 实例内部的 httpx.Client"""
         try:
-            self.layout_model = ChatOpenAI(
-                base_url=api_base,
-                api_key=api_key,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                # 不设置 response_format，让 LLM 自由输出 HTML
-            )
-            info_log(f"布局生成模型初始化成功 - 模型: {model_name}, API: {api_base}")
+            httpx_client = getattr(llm, '_httpx_client', None)
+            if httpx_client is not None:
+                httpx_client.close()
+                llm._httpx_client = None
         except Exception as e:
-            error_log(f"布局生成模型初始化失败: {e}")
-            raise
+            warn_log(f"关闭布局模型 httpx.Client 时出错: {e}")
 
     def _load_system_prompt(self) -> None:
         """加载布局生成 system prompt"""
@@ -133,23 +141,23 @@ class LayoutGenerator:
             debug_log(f"[generate_layout] 构建提示完成: messages数={len(messages)}")
 
             # 3. 调用 LLM
-            if not self.layout_model:
-                error_log("布局生成模型未初始化")
-                return {"panel_type": panel_type, "layout": "", "version": ""}
+            layout_llm = self._create_layout_llm()
+            try:
+                langchain_messages = []
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role == "system":
+                        langchain_messages.append(SystemMessage(content=content))
+                    else:
+                        langchain_messages.append(HumanMessage(content=content))
 
-            langchain_messages = []
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role == "system":
-                    langchain_messages.append(SystemMessage(content=content))
-                else:
-                    langchain_messages.append(HumanMessage(content=content))
-
-            debug_log("[generate_layout] 开始调用 LLM")
-            ai_message = self.layout_model.invoke(langchain_messages)
-            content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
-            debug_log(f"[generate_layout] LLM 响应完成: content长度={len(content)}")
+                debug_log("[generate_layout] 开始调用 LLM")
+                ai_message = layout_llm.invoke(langchain_messages)
+                content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+                debug_log(f"[generate_layout] LLM 响应完成: content长度={len(content)}")
+            finally:
+                self._close_llm(layout_llm)
 
             # 4. 提取 HTML
             layout_html = self._extract_html(content)

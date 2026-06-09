@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
 import yaml
 
+import httpx
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -58,7 +59,6 @@ class ChatAgent:
     """聊天代理类，负责与大模型交互，集成记忆功能"""
 
     def __init__(self, character_id: Optional[str] = None, user_id: Optional[str] = None):
-        self.llm: Optional[ChatOpenAI] = None
         self.system_prompt: str = ""
         self.config: Dict[str, Any] = {}
         self.character_id: Optional[str] = character_id
@@ -67,7 +67,7 @@ class ChatAgent:
 
         self._load_config()
         self._load_system_prompt()
-        self._init_llm()
+        self._init_llm_config()
         self._init_memory_manager()
 
     def _load_config(self) -> None:
@@ -93,36 +93,53 @@ class ChatAgent:
             warn_log(f"系统提示词文件不存在: {prompt_path}")
             self.system_prompt = "你是一个 helpful assistant。"
 
-    def _init_llm(self) -> None:
-        """初始化大模型连接"""
+    def _init_llm_config(self) -> None:
+        """保存 LLM 配置参数（不创建常驻实例，避免 httpx.Client 线程安全问题）"""
         llm_config = self.config.get("llm", {})
 
-        api_base = llm_config.get("api_base", "http://localhost:7778/v1")
-        api_key = llm_config.get("api_key", "not-needed")
-        model_name = llm_config.get("model_name", "Qwen3.6-27B-UD-Q4_K_XL")
+        self._llm_api_base = os.getenv("LLM_API_BASE", llm_config.get("api_base", "http://localhost:7778/v1"))
+        self._llm_api_key = os.getenv("LLM_API_KEY", llm_config.get("api_key", "not-needed"))
+        self._llm_model_name = os.getenv("LLM_MODEL_NAME", llm_config.get("model_name", "Qwen3.6-27B-UD-Q4_K_XL"))
+        self._llm_temperature = llm_config.get("temperature", 0.65)
+        self._llm_max_tokens = llm_config.get("max_tokens", 8192)
+        self._llm_top_p = llm_config.get("top_p", 0.85)
+        self._llm_frequency_penalty = llm_config.get("frequency_penalty", 0.1)
+        self._llm_presence_penalty = llm_config.get("presence_penalty", 0.2)
+        self._llm_response_format = llm_config.get("response_format", {"type": "json_object"})
 
-        # 也支持从环境变量读取
-        api_base = os.getenv("LLM_API_BASE", api_base)
-        api_key = os.getenv("LLM_API_KEY", api_key)
-        model_name = os.getenv("LLM_MODEL_NAME", model_name)
+        info_log(f"LLM 配置加载成功 - 模型: {self._llm_model_name}, API: {self._llm_api_base}")
 
+    def _create_llm(self) -> ChatOpenAI:
+        """创建新的 LLM 实例（每次请求创建，避免 httpx.Client 线程安全问题）"""
+        http_client = httpx.Client(
+            limits=httpx.Limits(max_keepalive_connections=0),
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+        )
+        llm = ChatOpenAI(
+            base_url=self._llm_api_base,
+            api_key=self._llm_api_key,
+            model=self._llm_model_name,
+            temperature=self._llm_temperature,
+            max_tokens=self._llm_max_tokens,
+            top_p=self._llm_top_p,
+            frequency_penalty=self._llm_frequency_penalty,
+            presence_penalty=self._llm_presence_penalty,
+            streaming=True,
+            model_kwargs={"response_format": self._llm_response_format},
+            http_client=http_client,
+        )
+        llm._httpx_client = http_client
+        return llm
+
+    def _close_llm(self, llm: ChatOpenAI) -> None:
+        """安全关闭 LLM 实例内部的 httpx.Client"""
         try:
-            self.llm = ChatOpenAI(
-                base_url=api_base,
-                api_key=api_key,
-                model=model_name,
-                temperature=llm_config.get("temperature", 0.65),
-                max_tokens=llm_config.get("max_tokens", 8192),
-                top_p=llm_config.get("top_p", 0.85),
-                frequency_penalty=llm_config.get("frequency_penalty", 0.1),
-                presence_penalty=llm_config.get("presence_penalty", 0.2),
-                streaming=True,
-                model_kwargs={"response_format": llm_config.get("response_format", {"type": "json_object"})},
-            )
-            info_log(f"LLM 初始化成功 - 模型: {model_name}, API: {api_base}")
+            httpx_client = getattr(llm, '_httpx_client', None)
+            if httpx_client is not None:
+                httpx_client.close()
+                llm._httpx_client = None
         except Exception as e:
-            error_log(f"LLM 初始化失败: {e}")
-            raise
+            warn_log(f"关闭 LLM httpx.Client 时出错: {e}")
 
     def _init_memory_manager(self) -> None:
         """初始化记忆管理器"""
@@ -331,11 +348,7 @@ class ChatAgent:
         Returns:
             生成大模型内容片段的 iterator
         """
-        if not self.llm:
-            error_log("LLM 未初始化")
-            raise RuntimeError("LLM 未初始化")
-
-        # 构建系统提示词（包含记忆上下文）— 同步操作立即执行
+        # 构建系统提示词（包括记忆上下文）— 同步操作立即执行
         system_content = self.system_prompt
         context_parts = []
 
@@ -373,11 +386,12 @@ class ChatAgent:
 
         # 内部 generator：仅负责 LLM 输出，不执行 hindsight-client 调用
         def _stream():
-            full_response = ""
+            llm = self._create_llm()
             try:
+                full_response = ""
                 if stream:
                     debug_log("开始使用流式模式调用大模型...")
-                    for chunk in self.llm.stream(langchain_messages):
+                    for chunk in llm.stream(langchain_messages):
                         content = chunk.content if hasattr(chunk, 'content') else str(chunk)
                         if content:
                             full_response += content
@@ -385,15 +399,16 @@ class ChatAgent:
                     debug_log("流式响应结束")
                 else:
                     debug_log("开始使用非流式模式调用大模型...")
-                    response = self.llm.invoke(langchain_messages)
+                    response = llm.invoke(langchain_messages)
                     content = response.content if hasattr(response, 'content') else str(response)
                     full_response = content
                     debug_log(f"收到完整响应: {content}")
                     yield content
-
             except Exception as e:
                 error_log(f"大模型调用失败: {e}")
                 raise
+            finally:
+                self._close_llm(llm)
 
         return _stream()
 

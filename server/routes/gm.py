@@ -14,6 +14,7 @@ from game_master import GameMaster
 from gm_logger import debug_log, info_log, error_log
 from layout_generator import LayoutGenerator, get_layout_generator
 from world_time_service import WorldTimeService, set_world_time_service
+from weather_service import WeatherService, set_weather_service
 from player_busy_manager import PlayerBusyManager, set_player_busy_manager, get_player_busy_manager
 from routes.auth import _verify_token
 
@@ -27,6 +28,9 @@ _gm_instance = None
 
 # 初始化 WorldTimeService 实例
 _world_time_service = None
+
+# 初始化 WeatherService 实例
+_weather_service = None
 
 
 def get_gm():
@@ -60,6 +64,25 @@ def get_world_time_service():
     return _world_time_service
 
 
+def get_weather_service():
+    """获取或初始化 WeatherService 实例（单例）"""
+    global _weather_service
+    if _weather_service is None:
+        try:
+            gm = get_gm()
+            wts = get_world_time_service()
+            if gm.storage:
+                _weather_service = WeatherService(gm.storage, wts)
+                _weather_service.start()
+                set_weather_service(_weather_service)
+                info_log("WeatherService 初始化并启动成功")
+            else:
+                error_log("WeatherService 初始化失败: GMStorage 不可用")
+        except Exception as e:
+            error_log(f"WeatherService 初始化失败: {e}")
+    return _weather_service
+
+
 # 初始化 PlayerBusyManager 实例
 _player_busy_manager = None
 
@@ -86,13 +109,13 @@ def _get_storage():
 
 def _get_game_time_and_location(current_area: str) -> dict:
     """
-    获取当前游戏时间和地点信息，用于 save_chat_message
+    获取当前游戏时间、地点和天气信息，用于 save_chat_message
 
     Args:
         current_area: 当前区域
 
     Returns:
-        包含 game_date, game_shichen, location 的字典
+        包含 game_date, game_shichen, location, weather, weather_desc, spirit_tide 的字典
     """
     game_date = ""
     game_shichen = ""
@@ -105,10 +128,28 @@ def _get_game_time_and_location(current_area: str) -> dict:
             game_shichen = f"{time_info.get('shichen_name', '')}·{time_info.get('shichen_period', '')}"
     except Exception:
         pass
+
+    weather = ""
+    weather_desc = ""
+    spirit_tide = False
+    try:
+        from weather_service import get_weather_service_instance
+        ws = get_weather_service_instance()
+        if ws:
+            weather_info = ws.get_current_weather()
+            weather = weather_info.get("weather", "")
+            weather_desc = weather_info.get("weather_desc", "")
+            spirit_tide = weather_info.get("spirit_tide", False)
+    except Exception:
+        pass
+
     return {
         "game_date": game_date,
         "game_shichen": game_shichen,
         "location": current_area,
+        "weather": weather,
+        "weather_desc": weather_desc,
+        "spirit_tide": spirit_tide,
     }
 
 
@@ -191,6 +232,9 @@ def gm_chat():
             game_date=time_loc["game_date"],
             game_shichen=time_loc["game_shichen"],
             location=time_loc["location"],
+            weather=time_loc["weather"],
+            weather_desc=time_loc["weather_desc"],
+            spirit_tide=time_loc["spirit_tide"],
             doc_id=message_id or None,
         )
     except Exception as e:
@@ -228,6 +272,25 @@ def gm_chat():
                                     result_data = json.loads(line[6:])
                                 except json.JSONDecodeError:
                                     pass
+
+                        # 发布 layout_change / world_event 到 EventBus，供统一 SSE 推送
+                        try:
+                            ui_config = result_data.get("ui_config", {})
+                            layout_hint = ui_config.get("layout_hint")
+                            if layout_hint:
+                                from event_bus import get_event_bus
+                                get_event_bus().publish("layout_change", {"panel_type": layout_hint})
+                                info_log(f"发布 layout_change 事件: panel_type={layout_hint}")
+
+                            world_events = ui_config.get("world_events", [])
+                            if isinstance(world_events, list) and world_events:
+                                from event_bus import get_event_bus
+                                for evt in world_events:
+                                    if isinstance(evt, dict):
+                                        get_event_bus().publish("world_event", evt)
+                                info_log(f"发布 world_event 事件: 数量={len(world_events)}")
+                        except Exception as e:
+                            error_log(f"发布 GM 事件到 EventBus 失败: {e}")
 
                 # 流式结束后保存 NPC 回复到聊天历史
                 npc_message_id = None
@@ -298,6 +361,9 @@ def gm_chat():
                 game_date=time_loc["game_date"],
                 game_shichen=time_loc["game_shichen"],
                 location=time_loc["location"],
+                weather=time_loc["weather"],
+                weather_desc=time_loc["weather_desc"],
+                spirit_tide=time_loc["spirit_tide"],
             )
             if save_resp and save_resp.get('id'):
                 response_data['npc_message_id'] = save_resp['id']
@@ -919,6 +985,9 @@ def gm_tutorial():
                         game_date=time_loc["game_date"],
                         game_shichen=time_loc["game_shichen"],
                         location=time_loc["location"],
+                        weather=time_loc["weather"],
+                        weather_desc=time_loc["weather_desc"],
+                        spirit_tide=time_loc["spirit_tide"],
                     )
                     storage.save_chat_message(
                         uid=uid,
@@ -931,6 +1000,9 @@ def gm_tutorial():
                         game_date=time_loc["game_date"],
                         game_shichen=time_loc["game_shichen"],
                         location=time_loc["location"],
+                        weather=time_loc["weather"],
+                        weather_desc=time_loc["weather_desc"],
+                        spirit_tide=time_loc["spirit_tide"],
                     )
                 except Exception as e:
                     error_log(f"流式保存引导教程聊天消息失败: {e}")
@@ -976,6 +1048,9 @@ def gm_tutorial():
                     game_date=time_loc["game_date"],
                     game_shichen=time_loc["game_shichen"],
                     location=time_loc["location"],
+                    weather=time_loc["weather"],
+                    weather_desc=time_loc["weather_desc"],
+                    spirit_tide=time_loc["spirit_tide"],
                 )
                 storage.save_chat_message(
                     uid=uid,
@@ -988,6 +1063,9 @@ def gm_tutorial():
                     game_date=time_loc["game_date"],
                     game_shichen=time_loc["game_shichen"],
                     location=time_loc["location"],
+                    weather=time_loc["weather"],
+                    weather_desc=time_loc["weather_desc"],
+                    spirit_tide=time_loc["spirit_tide"],
                 )
             except Exception as e:
                 error_log(f"保存引导教程聊天消息失败: {e}")
@@ -1112,6 +1190,213 @@ def world_time_sse():
                       })
     except Exception as e:
         error_log(f"世界时间 SSE 订阅失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/weather', methods=['GET'])
+def get_weather():
+    """
+    获取当前天气
+
+    响应格式:
+    {
+        "weather": "晴朗",
+        "weather_desc": "微风",
+        "spirit_tide": false,
+        "spirit_tide_intensity": 0
+    }
+    """
+    try:
+        ws = get_weather_service()
+        if ws is None:
+            return jsonify({
+                'error': {
+                    'message': '天气服务不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        weather_info = ws.get_current_weather()
+        return jsonify(weather_info)
+    except Exception as e:
+        error_log(f"获取天气失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/weather/sse', methods=['GET'])
+def weather_sse():
+    """
+    天气 SSE 订阅接口
+
+    当天气发生剧变时，推送天气信息事件流。
+    事件格式:
+        event: weather_change
+        data: {"weather": "...", "weather_desc": "...", ...}
+    """
+    try:
+        ws = get_weather_service()
+        if ws is None:
+            return jsonify({
+                'error': {
+                    'message': '天气服务不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        def generate():
+            import queue
+            q = queue.Queue()
+
+            def on_weather_change(weather_info):
+                """天气变化回调，将数据放入队列"""
+                try:
+                    q.put(weather_info, timeout=5)
+                except Exception:
+                    pass
+
+            # 订阅天气变化
+            ws.subscribe(on_weather_change)
+
+            try:
+                # 先发送当前天气
+                current_weather = ws.get_current_weather()
+                yield f"event: current_weather\ndata: {json.dumps(current_weather, ensure_ascii=False)}\n\n"
+
+                # 持续监听天气变化
+                while True:
+                    try:
+                        weather_info = q.get(timeout=30)
+                        yield f"event: weather_change\ndata: {json.dumps(weather_info, ensure_ascii=False)}\n\n"
+                    except queue.Empty:
+                        # 发送心跳，防止连接超时
+                        yield f"event: heartbeat\ndata: {{}}\n\n"
+            except GeneratorExit:
+                # 客户端断开连接
+                pass
+            finally:
+                ws.unsubscribe(on_weather_change)
+
+        return Response(generate(), mimetype='text/event-stream',
+                      headers={
+                          'Cache-Control': 'no-cache',
+                          'X-Accel-Buffering': 'no',
+                          'Connection': 'keep-alive',
+                      })
+    except Exception as e:
+        error_log(f"天气 SSE 订阅失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/events/sse', methods=['GET'])
+def events_sse():
+    """
+    统一 SSE 事件订阅接口
+
+    汇集世界时间变化、天气变化、布局变化、世界事件等所有服务端自主推送事件。
+    连接建立时立即发送 current_state 全量状态。
+
+    事件格式:
+        event: current_state
+        data: {"time": {...}, "weather": {...}}
+
+        event: time_change
+        data: {"game_date": "...", "shichen_name": "...", ...}
+
+        event: weather_change
+        data: {"weather": "...", "weather_desc": "...", ...}
+
+        event: layout_change
+        data: {"panel_type": "character|world|both"}
+
+        event: world_event
+        data: {"id": "...", "title": "...", "description": "...", ...}
+    """
+    try:
+        uid = request.args.get('uid', '')
+
+        # 获取各项服务
+        wts = get_world_time_service()
+        ws = get_weather_service()
+
+        if wts is None or ws is None:
+            return jsonify({
+                'error': {
+                    'message': '世界时间或天气服务不可用',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        # 订阅 EventBus
+        from event_bus import get_event_bus
+        event_bus = get_event_bus()
+        q = event_bus.subscribe()
+
+        def generate():
+            import queue
+            try:
+                # 先发送当前全量状态
+                current_state = {
+                    "time": wts.get_current_time(),
+                    "weather": ws.get_current_weather(),
+                }
+
+                # 如有 uid，附加忙碌状态
+                if uid:
+                    try:
+                        busy_mgr = get_player_busy_manager()
+                        if busy_mgr:
+                            busy_info = busy_mgr.get_busy_state(uid)
+                            current_state["busy_state"] = busy_info
+                    except Exception:
+                        pass
+
+                yield f"event: current_state\ndata: {json.dumps(current_state, ensure_ascii=False)}\n\n"
+
+                # 持续监听事件
+                while True:
+                    try:
+                        event = q.get(timeout=30)
+                        event_type = event.get("type", "")
+                        event_data = event.get("data", {})
+                        yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                    except queue.Empty:
+                        # 发送心跳，防止连接超时
+                        yield f"event: heartbeat\ndata: {{}}\n\n"
+            except GeneratorExit:
+                # 客户端断开连接
+                pass
+            finally:
+                event_bus.unsubscribe(q)
+
+        return Response(generate(), mimetype='text/event-stream',
+                      headers={
+                          'Cache-Control': 'no-cache',
+                          'X-Accel-Buffering': 'no',
+                          'Connection': 'keep-alive',
+                      })
+    except Exception as e:
+        error_log(f"统一 SSE 订阅失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

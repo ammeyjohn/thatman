@@ -86,76 +86,85 @@ class GameMaster:
 
     def _init_chat_model(self) -> None:
         """
-        初始化聊天模型（常驻，用于玩家聊天）
+        初始化聊天模型配置（仅保存配置，实际实例按需创建）
 
         从 config.yaml 的 chat_model 段读取配置，
         支持环境变量覆盖。
         """
         chat_cfg = self.config.get("chat_model", {})
+        self._chat_api_base = os.getenv("GM_CHAT_API_BASE", chat_cfg.get("api_base", "http://localhost:7778/v1"))
+        self._chat_api_key = os.getenv("GM_CHAT_API_KEY", chat_cfg.get("api_key", "not-needed"))
+        self._chat_model_name = os.getenv("GM_CHAT_MODEL_NAME", chat_cfg.get("model_name", "Qwen3.6-35B-A3B"))
+        self._chat_temperature = float(os.getenv("GM_CHAT_TEMPERATURE", chat_cfg.get("temperature", 0.65)))
+        self._chat_max_tokens = int(os.getenv("GM_CHAT_MAX_TOKENS", chat_cfg.get("max_tokens", 4096)))
+        info_log(f"聊天模型配置加载完成 - 模型: {self._chat_model_name}, API: {self._chat_api_base}")
 
-        api_base = os.getenv("GM_CHAT_API_BASE", chat_cfg.get("api_base", "http://localhost:7778/v1"))
-        api_key = os.getenv("GM_CHAT_API_KEY", chat_cfg.get("api_key", "not-needed"))
-        model_name = os.getenv("GM_CHAT_MODEL_NAME", chat_cfg.get("model_name", "Qwen3.6-35B-A3B"))
-        temperature = float(os.getenv("GM_CHAT_TEMPERATURE", chat_cfg.get("temperature", 0.65)))
-        max_tokens = int(os.getenv("GM_CHAT_MAX_TOKENS", chat_cfg.get("max_tokens", 4096)))
+    def _create_chat_llm(self) -> ChatOpenAI:
+        """
+        创建新的聊天模型实例（每次请求创建，避免 httpx.Client 线程安全问题）
 
-        try:
-            # 禁用 HTTP 连接池 keepalive，避免长时间空闲后复用已断开的连接导致挂起
-            chat_http_client = httpx.Client(
-                limits=httpx.Limits(max_keepalive_connections=0),
-                timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
-            )
-            self.chat_model = ChatOpenAI(
-                base_url=api_base,
-                api_key=api_key,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                model_kwargs={"response_format": {"type": "json_object"}},
-                request_timeout=120,
-                http_client=chat_http_client,
-            )
-            info_log(f"聊天模型初始化成功 - 模型: {model_name}, API: {api_base}")
-        except Exception as e:
-            error_log(f"聊天模型初始化失败: {e}")
-            raise
+        httpx.Client 不是线程安全的，多线程共享同一个实例会导致
+        连接池状态损坏，后续请求永久挂起。每次请求创建独立实例可彻底避免此问题。
+        """
+        chat_http_client = httpx.Client(
+            limits=httpx.Limits(max_keepalive_connections=0),
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+        )
+        llm = ChatOpenAI(
+            base_url=self._chat_api_base,
+            api_key=self._chat_api_key,
+            model=self._chat_model_name,
+            temperature=self._chat_temperature,
+            max_tokens=self._chat_max_tokens,
+            model_kwargs={"response_format": {"type": "json_object"}},
+            request_timeout=120,
+            http_client=chat_http_client,
+        )
+        llm._httpx_client = chat_http_client  # 保存引用，用于后续关闭
+        return llm
 
     def _init_world_model(self) -> None:
         """
-        初始化世界模型（按需，用于世界演化）
+        初始化世界模型配置（仅保存配置，实际实例按需创建）
 
         从 config.yaml 的 world_model 段读取配置，
         支持环境变量覆盖。
-        初始化失败时回退到 chat_model。
         """
         world_cfg = self.config.get("world_model", {})
+        self._world_api_base = os.getenv("GM_WORLD_API_BASE", world_cfg.get("api_base", "http://localhost:7779/v1"))
+        self._world_api_key = os.getenv("GM_WORLD_API_KEY", world_cfg.get("api_key", "not-needed"))
+        self._world_model_name = os.getenv("GM_WORLD_MODEL_NAME", world_cfg.get("model_name", "Qwen3.6-27B-MTP"))
+        self._world_temperature = float(os.getenv("GM_WORLD_TEMPERATURE", world_cfg.get("temperature", 0.7)))
+        self._world_max_tokens = int(os.getenv("GM_WORLD_MAX_TOKENS", world_cfg.get("max_tokens", 8192)))
+        info_log(f"世界模型配置加载完成 - 模型: {self._world_model_name}, API: {self._world_api_base}")
 
-        api_base = os.getenv("GM_WORLD_API_BASE", world_cfg.get("api_base", "http://localhost:7779/v1"))
-        api_key = os.getenv("GM_WORLD_API_KEY", world_cfg.get("api_key", "not-needed"))
-        model_name = os.getenv("GM_WORLD_MODEL_NAME", world_cfg.get("model_name", "Qwen3.6-27B-MTP"))
-        temperature = float(os.getenv("GM_WORLD_TEMPERATURE", world_cfg.get("temperature", 0.7)))
-        max_tokens = int(os.getenv("GM_WORLD_MAX_TOKENS", world_cfg.get("max_tokens", 8192)))
+    def _create_world_llm(self) -> ChatOpenAI:
+        """
+        创建新的世界模型实例（每次请求创建，避免 httpx.Client 线程安全问题）
 
+        如果世界模型配置不可用，回退到聊天模型配置。
+        """
+        world_http_client = httpx.Client(
+            limits=httpx.Limits(max_keepalive_connections=0),
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0),
+        )
         try:
-            # 禁用 HTTP 连接池 keepalive，避免长时间空闲后复用已断开的连接导致挂起
-            world_http_client = httpx.Client(
-                limits=httpx.Limits(max_keepalive_connections=0),
-                timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0),
-            )
-            self.world_model = ChatOpenAI(
-                base_url=api_base,
-                api_key=api_key,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
+            llm = ChatOpenAI(
+                base_url=self._world_api_base,
+                api_key=self._world_api_key,
+                model=self._world_model_name,
+                temperature=self._world_temperature,
+                max_tokens=self._world_max_tokens,
                 model_kwargs={"response_format": {"type": "json_object"}},
                 request_timeout=180,
                 http_client=world_http_client,
             )
-            info_log(f"世界模型初始化成功 - 模型: {model_name}, API: {api_base}")
+            llm._httpx_client = world_http_client  # 保存引用，用于后续关闭
+            return llm
         except Exception as e:
-            warn_log(f"世界模型初始化失败，回退到聊天模型: {e}")
-            self.world_model = self.chat_model
+            warn_log(f"创建世界模型实例失败，回退到聊天模型配置: {e}")
+            world_http_client.close()  # 关闭未使用的 client
+            return self._create_chat_llm()
 
     def _load_system_prompt(self) -> None:
         """加载 GM system prompt"""
@@ -325,12 +334,17 @@ class GameMaster:
             })
             debug_log("[build_messages] Step2.2 追加引导教程场景提示")
 
-        # 追加角色编号、当前区域、游戏时间、历史记忆
+        # 追加角色编号、当前区域、游戏时间、天气、历史记忆
         game_time_info = self._get_game_time_info()
+        weather_info = self._get_weather_info()
+        weather_str = f"{weather_info.get('weather', '未知')}·{weather_info.get('weather_desc', '未知')}"
+        if weather_info.get('spirit_tide'):
+            weather_str += f"，灵潮涌动（强度{weather_info.get('spirit_tide_intensity', 0)}）"
         memory_section = (
             f"【角色编号】{uid}\n"
             f"【当前区域】{current_area}\n"
             f"【游戏时间】{game_time_info}\n"
+            f"【当前天气】{weather_str}\n"
             f"【角色&世界历史记忆】：{memory_text}"
         )
         messages.append({
@@ -515,9 +529,13 @@ class GameMaster:
             )
             debug_log(f"[handle_chat] Step2 消息拼装完成: messages数={len(messages)}")
 
-            # 3. 调用 LLM 循环（使用 chat_model）
+            # 3. 调用 LLM 循环（每次请求创建新实例，避免 httpx.Client 线程安全问题）
             debug_log(f"[handle_chat] Step3 开始LLM调用循环: model=chat_model")
-            resp_json = self.llm_chat_loop(messages, self.chat_model)
+            chat_llm = self._create_chat_llm()
+            try:
+                resp_json = self.llm_chat_loop(messages, chat_llm)
+            finally:
+                self._close_llm(chat_llm)
             debug_log(f"[handle_chat] Step3 LLM循环结束: save_flag={resp_json.get('save_flag', '')}, dialog长度={len(resp_json.get('dialog', ''))}")
 
             # 4. 提取字段
@@ -603,11 +621,14 @@ class GameMaster:
             ]
             debug_log(f"[world_tick] Step2 消息构建完成: messages数={len(messages)}")
 
-            # 3. 调用 LLM 循环（使用 world_model，回退到 chat_model）
-            llm = self.world_model or self.chat_model
-            model_name = "world_model" if self.world_model else "chat_model(fallback)"
+            # 3. 调用 LLM 循环（每次请求创建新实例，避免 httpx.Client 线程安全问题）
+            world_llm = self._create_world_llm()
+            model_name = self._world_model_name
             debug_log(f"[world_tick] Step3 开始LLM调用循环: model={model_name}")
-            resp_json = self.llm_chat_loop(messages, llm)
+            try:
+                resp_json = self.llm_chat_loop(messages, world_llm)
+            finally:
+                self._close_llm(world_llm)
             debug_log(f"[world_tick] Step3 LLM循环结束: save_flag={resp_json.get('save_flag', '')}")
 
             # 4. 落库分发（save_flag 应为 "world_snap"）
@@ -641,6 +662,21 @@ class GameMaster:
     # ================================================================
     # 辅助方法
     # ================================================================
+
+    def _close_llm(self, llm: ChatOpenAI) -> None:
+        """
+        安全关闭 LLM 实例内部的 httpx.Client
+
+        每次请求创建的 LLM 实例使用独立的 httpx.Client，
+        请求结束后必须关闭以释放连接资源。
+        """
+        try:
+            httpx_client = getattr(llm, '_httpx_client', None)
+            if httpx_client is not None:
+                httpx_client.close()
+                llm._httpx_client = None
+        except Exception as e:
+            warn_log(f"关闭 LLM httpx.Client 时出错: {e}")
 
     def _check_and_handle_busy(self, uid: str) -> Optional[Dict[str, Any]]:
         """
@@ -726,6 +762,22 @@ class GameMaster:
         except Exception as e:
             error_log(f"获取游戏时间信息失败: {e}")
         return "未知"
+
+    def _get_weather_info(self) -> dict:
+        """
+        获取当前天气信息
+
+        Returns:
+            天气信息字典，包含 weather、weather_desc、spirit_tide
+        """
+        try:
+            from weather_service import get_weather_service_instance
+            ws = get_weather_service_instance()
+            if ws:
+                return ws.get_current_weather()
+        except Exception as e:
+            error_log(f"获取天气信息失败: {e}")
+        return {"weather": "晴朗", "weather_desc": "微风", "spirit_tide": False}
 
     # 角色档案格式化时的已知字段列表（按展示顺序排列）
     _KNOWN_PROFILE_FIELDS = [
@@ -1176,20 +1228,24 @@ class GameMaster:
             )
             debug_log(f"[handle_chat_stream] Step2 消息拼装完成: messages数={len(messages)}")
 
-            # 3. 流式调用 LLM 循环
+            # 3. 流式调用 LLM 循环（每次请求创建新实例，避免 httpx.Client 线程安全问题）
             debug_log(f"[handle_chat_stream] Step3 开始LLM流式调用循环: model=chat_model")
-            resp_json = {}
-            for sse_event in self.llm_chat_loop_stream(messages, self.chat_model):
-                yield sse_event
-                # 捕获 result 事件的数据用于后续落库
-                if sse_event.startswith("event: result"):
-                    # 提取 data 行
-                    for line in sse_event.split("\n"):
-                        if line.startswith("data: "):
-                            try:
-                                resp_json = json.loads(line[6:])
-                            except json.JSONDecodeError:
-                                pass
+            chat_llm = self._create_chat_llm()
+            try:
+                resp_json = {}
+                for sse_event in self.llm_chat_loop_stream(messages, chat_llm):
+                    yield sse_event
+                    # 捕获 result 事件的数据用于后续落库
+                    if sse_event.startswith("event: result"):
+                        # 提取 data 行
+                        for line in sse_event.split("\n"):
+                            if line.startswith("data: "):
+                                try:
+                                    resp_json = json.loads(line[6:])
+                                except json.JSONDecodeError:
+                                    pass
+            finally:
+                self._close_llm(chat_llm)
 
             # 4. 耗时处理：推进游戏时间 + 设置忙碌状态
             time_cost = resp_json.get("time_cost", 0)

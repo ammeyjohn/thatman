@@ -27,6 +27,7 @@ GM Storage - GM 存储执行层
 
 import json
 import logging
+import threading
 import uuid
 from typing import Dict, Any, Optional, List
 
@@ -55,7 +56,7 @@ logger = logging.getLogger(__name__)
 # ───────────────────────────────────────────────
 
 class OpenAIEmbeddingClient:
-    """基于 OpenAI 兼容 API 的 Embedding 客户端"""
+    """基于 OpenAI 兼容 API 的 Embedding 客户端（线程安全）"""
 
     def __init__(
         self,
@@ -69,16 +70,26 @@ class OpenAIEmbeddingClient:
         self._model_name = model_name
         self._max_tokens = max_tokens
         self._vector_size: Optional[int] = None
-        self._client = httpx.Client(
-            base_url=self._api_base,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(60.0),
-            limits=httpx.Limits(max_keepalive_connections=0),
-        )
+        # 线程本地存储，避免多线程共享 httpx.Client 导致连接池损坏
+        self._local = threading.local()
         info_log(f"OpenAI Embedding 客户端初始化: model={model_name}, api_base={api_base}")
+
+    @property
+    def _client(self) -> httpx.Client:
+        """获取当前线程的 httpx.Client（线程安全）"""
+        client = getattr(self._local, 'client', None)
+        if client is None:
+            client = httpx.Client(
+                base_url=self._api_base,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=httpx.Timeout(60.0),
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
+            self._local.client = client
+        return client
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """
@@ -201,15 +212,10 @@ class GMStorage:
         self._db_chat_history: str = f"{self._couch_db_prefix}chat_history"
         self._db_layouts: str = f"{self._couch_db_prefix}layouts"
         self._db_world_time: str = f"{self._couch_db_prefix}world_time"
+        self._db_weather: str = f"{self._couch_db_prefix}weather"
 
-        # 初始化 CouchDB httpx 客户端
-        self._couch_client: httpx.Client = httpx.Client(
-            base_url=self._couch_url,
-            auth=(self._couch_user, self._couch_password),
-            headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(30.0),
-            limits=httpx.Limits(max_keepalive_connections=0),
-        )
+        # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
+        self._couch_local = threading.local()
 
         # 确保 CouchDB 数据库存在
         self._ensure_couch_dbs()
@@ -234,6 +240,27 @@ class GMStorage:
     # CouchDB 辅助方法
     # ================================================================
 
+    @property
+    def _couch_client(self) -> httpx.Client:
+        """
+        获取当前线程的 CouchDB httpx.Client（线程安全）
+
+        httpx.Client 不是线程安全的，多线程共享同一个实例会导致
+        连接池状态损坏，后续请求永久挂起。使用线程本地存储确保
+        每个线程拥有独立的 httpx.Client 实例。
+        """
+        client = getattr(self._couch_local, 'client', None)
+        if client is None:
+            client = httpx.Client(
+                base_url=self._couch_url,
+                auth=(self._couch_user, self._couch_password),
+                headers={"Content-Type": "application/json"},
+                timeout=httpx.Timeout(30.0),
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
+            self._couch_local.client = client
+        return client
+
     def _ensure_couch_dbs(self) -> None:
         """确保 CouchDB 所需数据库存在，不存在则创建"""
         db_names = [
@@ -245,6 +272,7 @@ class GMStorage:
             self._db_chat_history,
             self._db_layouts,
             self._db_world_time,
+            self._db_weather,
         ]
         for db_name in db_names:
             try:
@@ -790,6 +818,7 @@ class GMStorage:
         保存世界时间状态
 
         文档 ID 固定为 'world_time_state'，自动携带 _rev 进行更新。
+        遇到 409 冲突时会自动重试（最多 3 次）。
 
         Args:
             time_data: 时间状态数据
@@ -798,27 +827,31 @@ class GMStorage:
             CouchDB 写入响应，失败返回空字典
         """
         try:
-            # 先查询现有文档获取 _rev
-            resp = self._couch_request("GET", f"/{self._db_world_time}/world_time_state")
-            if resp.status_code == 200:
-                existing = resp.json()
-                if "_rev" in existing:
-                    time_data["_rev"] = existing["_rev"]
-            elif resp.status_code != 404:
-                warn_log(f"查询世界时间文档失败, 状态码: {resp.status_code}")
-
             # 确保文档 ID 正确
             time_data["_id"] = "world_time_state"
 
-            resp = self._couch_request(
-                "PUT",
-                f"/{self._db_world_time}/world_time_state",
-                json_data=time_data,
-            )
-            if resp.status_code in (201, 202):
-                info_log("保存世界时间状态成功")
-                return resp.json()
-            else:
+            for attempt in range(3):
+                # 先查询现有文档获取 _rev
+                resp = self._couch_request("GET", f"/{self._db_world_time}/world_time_state")
+                if resp.status_code == 200:
+                    existing = resp.json()
+                    if "_rev" in existing:
+                        time_data["_rev"] = existing["_rev"]
+                elif resp.status_code != 404:
+                    warn_log(f"查询世界时间文档失败, 状态码: {resp.status_code}")
+
+                resp = self._couch_request(
+                    "PUT",
+                    f"/{self._db_world_time}/world_time_state",
+                    json_data=time_data,
+                )
+                if resp.status_code in (201, 202):
+                    info_log("保存世界时间状态成功")
+                    return resp.json()
+                if resp.status_code == 409 and attempt < 2:
+                    warn_log(f"保存世界时间状态冲突，第 {attempt + 1} 次重试...")
+                    continue
+
                 warn_log(f"保存世界时间状态失败, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
                 return {}
         except Exception as e:
@@ -828,6 +861,76 @@ class GMStorage:
     # ================================================================
     # 聊天记录操作
     # ================================================================
+
+    def couch_get_weather(self) -> dict:
+        """
+        获取天气状态
+
+        文档 ID 固定为 'weather_state'。
+
+        Returns:
+            天气状态字典，失败返回空字典
+        """
+        try:
+            resp = self._couch_request("GET", f"/{self._db_weather}/weather_state")
+            if resp.status_code == 200:
+                data = resp.json()
+                debug_log("获取天气状态成功")
+                return data
+            elif resp.status_code == 404:
+                debug_log("天气状态不存在，首次初始化")
+                return {}
+            else:
+                warn_log(f"获取天气状态失败, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"获取天气状态异常: {e}")
+            return {}
+
+    def couch_save_weather(self, weather_data: dict) -> dict:
+        """
+        保存天气状态
+
+        文档 ID 固定为 'weather_state'，自动携带 _rev 进行更新。
+        遇到 409 冲突时会自动重试（最多 3 次）。
+
+        Args:
+            weather_data: 天气状态数据
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            # 确保文档 ID 正确
+            weather_data["_id"] = "weather_state"
+
+            for attempt in range(3):
+                # 先查询现有文档获取 _rev
+                resp = self._couch_request("GET", f"/{self._db_weather}/weather_state")
+                if resp.status_code == 200:
+                    existing = resp.json()
+                    if "_rev" in existing:
+                        weather_data["_rev"] = existing["_rev"]
+                elif resp.status_code != 404:
+                    warn_log(f"查询天气文档失败, 状态码: {resp.status_code}")
+
+                resp = self._couch_request(
+                    "PUT",
+                    f"/{self._db_weather}/weather_state",
+                    json_data=weather_data,
+                )
+                if resp.status_code in (201, 202):
+                    info_log("保存天气状态成功")
+                    return resp.json()
+                if resp.status_code == 409 and attempt < 2:
+                    warn_log(f"保存天气状态冲突，第 {attempt + 1} 次重试...")
+                    continue
+
+                warn_log(f"保存天气状态失败, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存天气状态异常: {e}")
+            return {}
 
     def save_chat_message(
         self,
@@ -841,6 +944,9 @@ class GMStorage:
         game_date: Optional[str] = None,
         game_shichen: Optional[str] = None,
         location: Optional[str] = None,
+        weather: Optional[str] = None,
+        weather_desc: Optional[str] = None,
+        spirit_tide: Optional[bool] = None,
         doc_id: Optional[str] = None,
     ) -> dict:
         """
@@ -857,6 +963,9 @@ class GMStorage:
             game_date: 游戏日期，如"天元三千六百年·正月初一"
             game_shichen: 游戏时辰，如"卯时·清晨"
             location: 当前地点
+            weather: 天气，如"晴朗"
+            weather_desc: 天气描述，如"微风"
+            spirit_tide: 灵潮状态
             doc_id: 可选，指定文档 ID，不传则自动生成
 
         Returns:
@@ -884,6 +993,12 @@ class GMStorage:
                 doc["game_shichen"] = game_shichen
             if location:
                 doc["location"] = location
+            if weather:
+                doc["weather"] = weather
+            if weather_desc:
+                doc["weather_desc"] = weather_desc
+            if spirit_tide is not None:
+                doc["spirit_tide"] = spirit_tide
 
             resp = self._couch_request("PUT", f"/{self._db_chat_history}/{doc_id}", json_data=doc)
             if resp.status_code in (201, 202):
@@ -1361,7 +1476,16 @@ class GMStorage:
         player_update = resp_json.get("player_update", {})
         if player_update:
             debug_log(f"[_dispatch_player_update] 保存玩家数据: uid={uid}, 字段={list(player_update.keys())}")
-            self.couch_save_player(uid, player_update)
+            # 先获取现有文档，进行增量合并，避免覆盖其他字段
+            existing = self.couch_get_player(uid)
+            if existing and "_id" in existing:
+                merged = {**existing, **player_update}
+                # 移除 CouchDB 内部字段，避免冲突
+                merged.pop("_id", None)
+                merged.pop("_rev", None)
+                self.couch_save_player(uid, merged)
+            else:
+                self.couch_save_player(uid, player_update)
             debug_log(f"[_dispatch_player_update] 玩家数据保存完成: uid={uid}")
         else:
             warn_log(f"player_update 分支缺少 player_update 数据: uid={uid}")
@@ -1589,15 +1713,16 @@ class GMStorage:
 
     def close(self) -> None:
         """关闭所有客户端连接"""
-        # 关闭 CouchDB 客户端
-        if self._couch_client:
+        # 关闭当前线程的 CouchDB 客户端
+        client = getattr(self._couch_local, 'client', None)
+        if client:
             try:
-                self._couch_client.close()
+                client.close()
                 debug_log("CouchDB 连接已关闭")
             except Exception as e:
                 warn_log(f"关闭 CouchDB 连接时出错: {e}")
             finally:
-                self._couch_client = None
+                self._couch_local.client = None
 
         # 关闭 Hindsight 记忆库连接
         for bank_id, store in self._memory_stores.items():

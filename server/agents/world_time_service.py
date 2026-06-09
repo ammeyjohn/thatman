@@ -402,7 +402,14 @@ class WorldTimeService:
 
         每 6 秒调用一次，推进 1 游戏分钟。
         检测时辰变化，变化时保存数据库并通知订阅者。
+
+        注意：锁仅保护内存状态的读写，I/O 操作（数据库保存、通知订阅者）
+        在锁外执行，避免持锁时因网络阻塞导致死锁。
         """
+        need_save = False
+        need_notify = False
+        time_info = None
+
         with self._lock:
             # 记录推进前的时辰
             old_shichen = _get_shichen(self._game_hour)
@@ -421,17 +428,22 @@ class WorldTimeService:
                 # 更新当前时辰索引
                 self._current_shichen_index = new_shichen["index"]
 
-                # 保存到数据库
-                self._save_to_db()
-
-                # 通知所有订阅者
-                time_info = self.get_current_time()
-                self._notify_subscribers(time_info)
+                # 标记需要在锁外执行的操作
+                need_save = True
+                need_notify = True
+                time_info = self._get_current_time_locked()
             else:
                 self._current_shichen_index = new_shichen["index"]
                 debug_log(f"时间推进: {self._format_game_date()} "
                           f"{self._game_hour:02d}:{self._game_minute:02d} "
                           f"({new_shichen['name']}·{new_shichen['period']})")
+
+        # 在锁外执行 I/O 操作，避免持锁时因网络阻塞导致死锁
+        if need_save:
+            self._save_to_db()
+
+        if need_notify and time_info:
+            self._notify_subscribers(time_info)
 
     def _notify_subscribers(self, time_info: dict) -> None:
         """
@@ -445,6 +457,13 @@ class WorldTimeService:
                 callback(time_info)
             except Exception as e:
                 error_log(f"通知时辰变化订阅者失败: {e}")
+
+        # 同时发布到全局 EventBus，供统一 SSE 使用
+        try:
+            from event_bus import get_event_bus
+            get_event_bus().publish("time_change", time_info)
+        except Exception as e:
+            error_log(f"发布时辰变化到 EventBus 失败: {e}")
 
     def _run_loop(self) -> None:
         """后台线程主循环"""
@@ -468,19 +487,28 @@ class WorldTimeService:
             时间信息字典，包含游戏日期、时辰、时间比例等
         """
         with self._lock:
-            shichen = _get_shichen(self._game_hour)
-            return {
-                "game_date": self._format_game_date(),
-                "game_year": self._game_year,
-                "game_month": self._game_month,
-                "game_day": self._game_day,
-                "game_hour": self._game_hour,
-                "game_minute": self._game_minute,
-                "shichen_name": shichen["name"],
-                "shichen_period": shichen["period"],
-                "shichen_index": shichen["index"],
-                "time_ratio": self.TIME_RATIO,
-            }
+            return self._get_current_time_locked()
+
+    def _get_current_time_locked(self) -> dict:
+        """
+        获取当前游戏时间信息（调用方必须已持有 self._lock）
+
+        Returns:
+            时间信息字典
+        """
+        shichen = _get_shichen(self._game_hour)
+        return {
+            "game_date": self._format_game_date(),
+            "game_year": self._game_year,
+            "game_month": self._game_month,
+            "game_day": self._game_day,
+            "game_hour": self._game_hour,
+            "game_minute": self._game_minute,
+            "shichen_name": shichen["name"],
+            "shichen_period": shichen["period"],
+            "shichen_index": shichen["index"],
+            "time_ratio": self.TIME_RATIO,
+        }
 
     def advance_time_by_action(self, minutes: int, reason: str = "") -> dict:
         """
@@ -488,6 +516,9 @@ class WorldTimeService:
 
         与 _tick() 的自然推进不同，此方法由玩家行为触发，
         推进后立即保存到数据库并通知所有订阅者。
+
+        注意：锁仅保护内存状态的读写，I/O 操作在锁外执行，
+        避免持锁时因网络阻塞导致死锁。
 
         Args:
             minutes: 推进的游戏分钟数
@@ -505,20 +536,13 @@ class WorldTimeService:
                 "shichen_changed": False,
             }
 
+        need_save = False
+        need_notify = False
+
         with self._lock:
             # 记录推进前的时间
             old_shichen = _get_shichen(self._game_hour)
-            old_time = {
-                "game_date": self._format_game_date(),
-                "game_year": self._game_year,
-                "game_month": self._game_month,
-                "game_day": self._game_day,
-                "game_hour": self._game_hour,
-                "game_minute": self._game_minute,
-                "shichen_name": old_shichen["name"],
-                "shichen_period": old_shichen["period"],
-                "shichen_index": old_shichen["index"],
-            }
+            old_time = self._get_current_time_locked()
 
             # 推进时间
             self._advance_time(minutes)
@@ -526,29 +550,36 @@ class WorldTimeService:
             # 检测时辰变化
             new_shichen = _get_shichen(self._game_hour)
 
-            # 保存到数据库（行为推进是重要事件，必须立即持久化）
-            self._save_to_db()
+            # 标记需要在锁外执行的操作
+            need_save = True
+            new_time = self._get_current_time_locked()
+            shichen_changed = new_shichen["index"] != old_shichen["index"]
 
-            # 构造返回信息
-            new_time = self.get_current_time()
             result = {
                 "advanced_minutes": minutes,
                 "reason": reason,
                 "old_time": old_time,
                 "new_time": new_time,
-                "shichen_changed": new_shichen["index"] != old_shichen["index"],
+                "shichen_changed": shichen_changed,
             }
 
             info_log(f"行为推进时间: {minutes}游戏分钟, 原因={reason or '未指定'}, "
-                     f"时辰变化={'是' if result['shichen_changed'] else '否'}, "
+                     f"时辰变化={'是' if shichen_changed else '否'}, "
                      f"新时间={new_time.get('game_date', '')} "
                      f"{new_time.get('shichen_name', '')}·{new_time.get('shichen_period', '')} "
                      f"{new_time.get('game_hour', 0):02d}:{new_time.get('game_minute', 0):02d}")
 
-            # 通知所有订阅者（行为推进也需要通知前端更新时间）
+            # 行为推进也需要通知前端更新时间
+            need_notify = True
+
+        # 在锁外执行 I/O 操作，避免持锁时因网络阻塞导致死锁
+        if need_save:
+            self._save_to_db()
+
+        if need_notify:
             self._notify_subscribers(new_time)
 
-            return result
+        return result
 
     def subscribe(self, callback: Callable) -> None:
         """

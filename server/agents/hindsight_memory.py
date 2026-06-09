@@ -35,6 +35,7 @@ Hindsight Memory Store - 记忆库存储模块 (纯同步版本)
 
 import os
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -86,7 +87,7 @@ class HindsightMemoryStore:
         auto_retain: bool = False,
         mission: Optional[str] = None,
         disposition: Optional[Dict[str, int]] = None,
-        timeout: float = 300.0,
+        timeout: float = 30.0,
     ):
         """
         初始化记忆库
@@ -117,17 +118,26 @@ class HindsightMemoryStore:
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
 
-        # 创建 httpx 同步客户端
-        self._client: httpx.Client = httpx.Client(
-            base_url=self.base_url,
-            headers=self._headers,
-            timeout=httpx.Timeout(timeout),
-            limits=httpx.Limits(max_keepalive_connections=0),
-        )
+        # 线程本地存储，避免多线程共享 httpx.Client 导致连接池损坏
+        self._local = threading.local()
 
         # 确保 bank 存在
         self._ensure_bank(self.bank_name, self.mission, self.disposition)
         info_log(f"Hindsight 记忆库连接成功 - Bank: {self.bank_id}")
+
+    @property
+    def _client(self) -> httpx.Client:
+        """获取当前线程的 httpx.Client（线程安全）"""
+        client = getattr(self._local, 'client', None)
+        if client is None:
+            client = httpx.Client(
+                base_url=self.base_url,
+                headers=self._headers,
+                timeout=httpx.Timeout(self.timeout),
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
+            self._local.client = client
+        return client
 
     def _request(
         self,
@@ -452,15 +462,16 @@ class HindsightMemoryStore:
             return {"bank_id": self.bank_id, "error": str(e)}
 
     def close(self) -> None:
-        """关闭客户端连接"""
-        if self._client:
+        """关闭当前线程的客户端连接"""
+        client = getattr(self._local, 'client', None)
+        if client:
             try:
-                self._client.close()
+                client.close()
                 debug_log(f"Hindsight 连接已关闭: {self.bank_id}")
             except Exception as e:
                 warn_log(f"关闭连接时出错: {e}")
             finally:
-                self._client = None
+                self._local.client = None
 
     def __enter__(self):
         """上下文管理器入口"""
