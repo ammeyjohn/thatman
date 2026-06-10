@@ -1,6 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
+    pull_policy: never
     container_name: qdrant
     restart: unless-stopped
     ports:

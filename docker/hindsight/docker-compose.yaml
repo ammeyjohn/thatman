@@ -2,7 +2,7 @@ services:
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:latest
     container_name: hindsight
-    pull_policy: always
+    pull_policy: never
     restart: unless-stopped
     ports:
       - "9998:8888"
@@ -11,10 +11,10 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       HINDSIGHT_API_LLM_PROVIDER: openai
-      HINDSIGHT_API_LLM_MODEL: Qwen3.6-35B-A3B-MTP-Q4
-      HINDSIGHT_API_LLM_BASE_URL: http://host.docker.internal:7778/v1
+      HINDSIGHT_API_LLM_MODEL: xopqwen36v35b
+      HINDSIGHT_API_LLM_BASE_URL: https://maas-api.cn-huabei-1.xf-yun.com/v2
       # HINDSIGHT_API_LLM_BASE_URL: http://128.1.1.48:7778/v1
-      HINDSIGHT_API_LLM_API_KEY: dummy
+      HINDSIGHT_API_LLM_API_KEY: 5420b59ed8a7328d833706e303a070ba:NGE4NjBmN2JjMzFkMDg3N2I1MGI3MTZi
 
       # 外部 Embedding 接口
       HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
