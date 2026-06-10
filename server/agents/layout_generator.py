@@ -152,10 +152,15 @@ class LayoutGenerator:
                     else:
                         langchain_messages.append(HumanMessage(content=content))
 
+                # 日志输出调用内容（原始 JSON 格式）
+                messages_json = json.dumps(messages, ensure_ascii=False)
+                debug_log(f"[generate_layout] 请求消息(JSON): {messages_json[:3000]}{'...' if len(messages_json) > 3000 else ''}")
+
                 debug_log("[generate_layout] 开始调用 LLM")
                 ai_message = layout_llm.invoke(langchain_messages)
                 content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
                 debug_log(f"[generate_layout] LLM 响应完成: content长度={len(content)}")
+                debug_log(f"[generate_layout] LLM 响应内容: {content[:2000]}{'...' if len(content) > 2000 else ''}")
             finally:
                 self._close_llm(layout_llm)
 
@@ -187,7 +192,7 @@ class LayoutGenerator:
 
         except Exception as e:
             error_log(f"生成布局异常: uid={uid}, panel_type={panel_type}, 错误: {e}")
-            return {"panel_type": panel_type, "layout": "", "version": ""}
+            return {"panel_type": panel_type, "layout": "", "version": "", "error": str(e)}
 
     def _build_layout_prompt(
         self,

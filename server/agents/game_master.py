@@ -14,10 +14,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Generator
 
-import httpx
 import yaml
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from openai import OpenAI
 
 from gm_storage import GMStorage
 from gm_tools import get_all_tools, match_and_execute_tool
@@ -47,8 +45,8 @@ class GameMaster:
         debug_log("GM debug 模式已启用" if is_debug() else "GM debug 模式已关闭")
 
         # 2. 初始化双模型 LLM 连接
-        self.chat_model: Optional[ChatOpenAI] = None
-        self.world_model: Optional[ChatOpenAI] = None
+        self.chat_model: Optional[Any] = None
+        self.world_model: Optional[Any] = None
         self._init_chat_model()
         self._init_world_model()
 
@@ -109,29 +107,18 @@ class GameMaster:
         self._chat_max_tokens = int(os.getenv("GM_CHAT_MAX_TOKENS", chat_cfg.get("max_tokens", 4096)))
         info_log(f"聊天模型配置加载完成 - 模型: {self._chat_model_name}, API: {self._chat_api_base}")
 
-    def _create_chat_llm(self) -> ChatOpenAI:
+    def _create_chat_llm(self) -> OpenAI:
         """
         创建新的聊天模型实例（每次请求创建，避免 httpx.Client 线程安全问题）
-
-        httpx.Client 不是线程安全的，多线程共享同一个实例会导致
-        连接池状态损坏，后续请求永久挂起。每次请求创建独立实例可彻底避免此问题。
         """
-        chat_http_client = httpx.Client(
-            limits=httpx.Limits(max_keepalive_connections=0),
-            timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
-        )
-        llm = ChatOpenAI(
+        client = OpenAI(
             base_url=self._chat_api_base,
             api_key=self._chat_api_key,
-            model=self._chat_model_name,
-            temperature=self._chat_temperature,
-            max_tokens=self._chat_max_tokens,
-            model_kwargs={"response_format": {"type": "json_object"}},
-            request_timeout=120,
-            http_client=chat_http_client,
         )
-        llm._httpx_client = chat_http_client  # 保存引用，用于后续关闭
-        return llm
+        client._gm_model_name = self._chat_model_name
+        client._gm_temperature = self._chat_temperature
+        client._gm_max_tokens = self._chat_max_tokens
+        return client
 
     def _init_world_model(self) -> None:
         """
@@ -148,32 +135,23 @@ class GameMaster:
         self._world_max_tokens = int(os.getenv("GM_WORLD_MAX_TOKENS", world_cfg.get("max_tokens", 8192)))
         info_log(f"世界模型配置加载完成 - 模型: {self._world_model_name}, API: {self._world_api_base}")
 
-    def _create_world_llm(self) -> ChatOpenAI:
+    def _create_world_llm(self) -> OpenAI:
         """
         创建新的世界模型实例（每次请求创建，避免 httpx.Client 线程安全问题）
 
         如果世界模型配置不可用，回退到聊天模型配置。
         """
-        world_http_client = httpx.Client(
-            limits=httpx.Limits(max_keepalive_connections=0),
-            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0),
-        )
         try:
-            llm = ChatOpenAI(
+            client = OpenAI(
                 base_url=self._world_api_base,
                 api_key=self._world_api_key,
-                model=self._world_model_name,
-                temperature=self._world_temperature,
-                max_tokens=self._world_max_tokens,
-                model_kwargs={"response_format": {"type": "json_object"}},
-                request_timeout=180,
-                http_client=world_http_client,
             )
-            llm._httpx_client = world_http_client  # 保存引用，用于后续关闭
-            return llm
+            client._gm_model_name = self._world_model_name
+            client._gm_temperature = self._world_temperature
+            client._gm_max_tokens = self._world_max_tokens
+            return client
         except Exception as e:
             warn_log(f"创建世界模型实例失败，回退到聊天模型配置: {e}")
-            world_http_client.close()  # 关闭未使用的 client
             return self._create_chat_llm()
 
     def _load_system_prompt(self) -> None:
@@ -402,7 +380,7 @@ class GameMaster:
         debug_log(f"[build_messages] 完成: 总消息数={len(messages)}")
         return messages
 
-    def llm_chat_loop(self, messages: List[Dict[str, str]], llm: ChatOpenAI) -> Dict[str, Any]:
+    def llm_chat_loop(self, messages: List[Dict[str, str]], llm: OpenAI) -> Dict[str, Any]:
         """
         工具调用循环逻辑
 
@@ -412,7 +390,7 @@ class GameMaster:
 
         Args:
             messages: 消息列表
-            llm: 使用的 LLM 实例
+            llm: 使用的 LLM 实例 (OpenAI client)
 
         Returns:
             解析后的 JSON 字典
@@ -430,60 +408,72 @@ class GameMaster:
             error_log("storage 未初始化，工具无法执行")
             return {"dialog": "系统异常，存储层不可用。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
-        # 绑定工具
-        debug_log(f"[llm_chat_loop] Step1 绑定工具: tools数={len(self.tools)}")
-        llm_with_tools = llm.bind_tools(self.tools)
+        # messages 已经是 OpenAI 格式，直接使用
+        current_messages = list(messages)
 
-        # 转换消息为 LangChain 格式
-        debug_log("[llm_chat_loop] Step2 转换消息为LangChain格式")
-        langchain_messages = self._convert_messages(messages)
+        # 日志输出调用内容（原始 JSON 格式）
+        messages_json = json.dumps(current_messages, ensure_ascii=False)
+        debug_log(f"[llm_chat_loop] 请求消息(JSON): {messages_json[:3000]}{'...' if len(messages_json) > 3000 else ''}")
 
         for loop_count in range(self.MAX_TOOL_LOOP):
             debug_log(f"[llm_chat_loop] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
 
             try:
-                ai_message = llm_with_tools.invoke(langchain_messages)
-                debug_log(f"[llm_chat_loop] LLM响应成功: content长度={len(ai_message.content) if hasattr(ai_message, 'content') and ai_message.content else 0}")
+                response = llm.chat.completions.create(
+                    model=getattr(llm, '_gm_model_name', self._chat_model_name),
+                    messages=current_messages,
+                    tools=self.tools,
+                    tool_choice="auto",
+                    temperature=getattr(llm, '_gm_temperature', 0.65),
+                    max_tokens=getattr(llm, '_gm_max_tokens', 4096),
+                    response_format={"type": "json_object"},
+                )
+                message = response.choices[0].message
+                resp_content = message.content or ""
+                debug_log(f"[llm_chat_loop] LLM响应成功: content长度={len(resp_content)}")
+                debug_log(f"[llm_chat_loop] LLM响应内容: {resp_content[:2000]}{'...' if len(resp_content) > 2000 else ''}")
             except Exception as e:
                 error_log(f"LLM 调用失败: {e}")
-                return {"dialog": "大模型调用异常，请稍后重试。", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
+                return {"dialog": f"大模型调用异常: {e}", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
             # 检查是否有工具调用
-            tool_calls = getattr(ai_message, "tool_calls", None)
+            tool_calls = message.tool_calls
 
             if not tool_calls:
                 # 无工具调用，尝试解析文本为 JSON
-                content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+                content = message.content or ""
                 debug_log(f"[llm_chat_loop] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
                 parsed = self._parse_json_response(content)
-
                 return parsed
 
             # 有工具调用，逐个执行
             debug_log(f"[llm_chat_loop] Step4 收到 {len(tool_calls)} 个工具调用")
 
-            # 将 AIMessage 追加到消息列表
-            langchain_messages.append(ai_message)
+            # 将 assistant message 追加到消息列表
+            current_messages.append({
+                "role": "assistant",
+                "content": resp_content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    }
+                    for tc in tool_calls
+                ]
+            })
 
             for idx, tool_call in enumerate(tool_calls):
-                tool_call_id = tool_call.get("id", "") if isinstance(tool_call, dict) else getattr(tool_call, "id", "")
-                function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
-
-                if isinstance(tool_call, dict):
-                    tool_name = function.get("name", "")
-                    tool_args_str = function.get("arguments", "{}")
-                else:
-                    tool_name = getattr(tool_call, "name", "") or getattr(function, "name", "")
-                    tool_args_str = getattr(tool_call, "args", {}) if hasattr(tool_call, "args") else "{}"
+                tool_call_id = tool_call.id
+                tool_name = tool_call.function.name
+                tool_args_str = tool_call.function.arguments
 
                 # 解析工具参数
                 try:
-                    if isinstance(tool_args_str, str):
-                        tool_args = json.loads(tool_args_str)
-                    elif isinstance(tool_args_str, dict):
-                        tool_args = tool_args_str
-                    else:
-                        tool_args = {}
+                    tool_args = json.loads(tool_args_str)
                 except json.JSONDecodeError as e:
                     error_log(f"工具参数 JSON 解析失败: {e}")
                     tool_args = {}
@@ -500,10 +490,11 @@ class GameMaster:
                     result = json.dumps({"error": f"工具执行异常: {e}"}, ensure_ascii=False)
 
                 # 构造工具结果消息追加到消息列表
-                from langchain_core.messages import ToolMessage
-                langchain_messages.append(
-                    ToolMessage(content=result, tool_call_id=tool_call_id)
-                )
+                current_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": result,
+                })
 
         # 超过最大循环次数
         error_log(f"LLM 工具调用循环超过最大次数 {self.MAX_TOOL_LOOP}")
@@ -656,7 +647,7 @@ class GameMaster:
         except Exception as e:
             error_log(f"处理玩家聊天异常: uid={uid}, 错误: {e}")
             return {
-                "dialog": "系统处理异常，请稍后重试。",
+                "dialog": f"系统处理异常: {e}",
                 "actions": [],
                 "player_update": {},
                 "ui_config": {},
@@ -721,7 +712,7 @@ class GameMaster:
         except Exception as e:
             error_log(f"世界演化任务异常: {e}")
             return {
-                "dialog": "世界演化异常。",
+                "dialog": f"世界演化异常: {e}",
                 "player_update": {},
                 "ui_config": {},
                 "save_flag": "",
@@ -731,20 +722,18 @@ class GameMaster:
     # 辅助方法
     # ================================================================
 
-    def _close_llm(self, llm: ChatOpenAI) -> None:
+    def _close_llm(self, llm: OpenAI) -> None:
         """
-        安全关闭 LLM 实例内部的 httpx.Client
+        安全关闭 LLM client
 
-        每次请求创建的 LLM 实例使用独立的 httpx.Client，
+        每次请求创建的 OpenAI client 使用独立的连接池，
         请求结束后必须关闭以释放连接资源。
         """
         try:
-            httpx_client = getattr(llm, '_httpx_client', None)
-            if httpx_client is not None:
-                httpx_client.close()
-                llm._httpx_client = None
+            if hasattr(llm, 'close'):
+                llm.close()
         except Exception as e:
-            warn_log(f"关闭 LLM httpx.Client 时出错: {e}")
+            warn_log(f"关闭 LLM client 时出错: {e}")
 
     def _check_and_handle_busy(self, uid: str, user_input: str = "") -> Optional[Dict[str, Any]]:
         """
@@ -1064,31 +1053,6 @@ class GameMaster:
 
         return "\n".join(lines)
 
-    def _convert_messages(self, messages: List[Dict[str, str]]) -> List:
-        """
-        将字典格式的消息列表转换为 LangChain 消息对象列表
-
-        Args:
-            messages: 字典格式的消息列表
-
-        Returns:
-            LangChain 消息对象列表
-        """
-        langchain_messages = []
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if role == "system":
-                langchain_messages.append(SystemMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
-            else:  # user 或其他
-                langchain_messages.append(HumanMessage(content=content))
-
-        return langchain_messages
-
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """
         解析 LLM 返回的 JSON 文本
@@ -1182,7 +1146,7 @@ class GameMaster:
             return current_dialog[len(prev_dialog):]
         return ""
 
-    def llm_chat_loop_stream(self, messages: List[Dict[str, str]], llm: ChatOpenAI) -> Generator[str, None, None]:
+    def llm_chat_loop_stream(self, messages: List[Dict[str, str]], llm: OpenAI) -> Generator[str, None, None]:
         """
         流式工具调用循环逻辑，以 SSE 事件格式 yield 数据
 
@@ -1192,7 +1156,7 @@ class GameMaster:
 
         Args:
             messages: 消息列表
-            llm: 使用的 LLM 实例
+            llm: 使用的 LLM 实例 (OpenAI client)
 
         Yields:
             SSE 格式的事件字符串
@@ -1209,52 +1173,69 @@ class GameMaster:
             yield self._sse_event("error", {"message": "存储层不可用"})
             return
 
-        # 绑定工具
-        debug_log(f"[llm_chat_loop_stream] Step1 绑定工具: tools数={len(self.tools)}")
-        llm_with_tools = llm.bind_tools(self.tools)
+        current_messages = list(messages)
 
-        # 转换消息为 LangChain 格式
-        debug_log("[llm_chat_loop_stream] Step2 转换消息为LangChain格式")
-        langchain_messages = self._convert_messages(messages)
+        # 日志输出调用内容（原始 JSON 格式）
+        messages_json = json.dumps(current_messages, ensure_ascii=False)
+        debug_log(f"[llm_chat_loop_stream] 请求消息(JSON): {messages_json[:3000]}{'...' if len(messages_json) > 3000 else ''}")
 
         for loop_count in range(self.MAX_TOOL_LOOP):
             debug_log(f"[llm_chat_loop_stream] Step3 LLM调用循环第 {loop_count + 1}/{self.MAX_TOOL_LOOP} 次")
 
             try:
-                # 使用流式调用
-                full_chunk = None
                 accumulated_content = ""
                 prev_dialog = ""
+                tool_calls_acc: Dict[int, Dict[str, Any]] = {}
 
-                for chunk in llm_with_tools.stream(langchain_messages):
-                    # 累积 chunk
-                    if full_chunk is None:
-                        full_chunk = chunk
-                    else:
-                        full_chunk = full_chunk + chunk
+                for chunk in llm.chat.completions.create(
+                    model=getattr(llm, '_gm_model_name', self._chat_model_name),
+                    messages=current_messages,
+                    tools=self.tools,
+                    tool_choice="auto",
+                    temperature=getattr(llm, '_gm_temperature', 0.65),
+                    max_tokens=getattr(llm, '_gm_max_tokens', 4096),
+                    response_format={"type": "json_object"},
+                    stream=True,
+                ):
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if not delta:
+                        continue
 
-                    # 累积内容文本
-                    if hasattr(chunk, 'content') and chunk.content:
-                        accumulated_content += chunk.content
-
-                        # 尝试增量提取 dialog
+                    # 累积 content
+                    if delta.content:
+                        accumulated_content += delta.content
                         new_dialog = self._extract_dialog_from_partial_json(accumulated_content, prev_dialog)
                         if new_dialog:
                             prev_dialog += new_dialog
                             yield self._sse_event("dialog_delta", {"content": new_dialog})
 
+                    # 累积 tool_calls
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                            if tc.id:
+                                tool_calls_acc[idx]["id"] = tc.id
+                            if tc.type:
+                                tool_calls_acc[idx]["type"] = tc.type
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[idx]["function"]["name"] = tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_acc[idx]["function"]["arguments"] += tc.function.arguments
+
             except Exception as e:
                 error_log(f"LLM 流式调用失败: {e}")
-                yield self._sse_event("error", {"message": f"大模型调用异常: {e}"})
+                yield self._sse_event("error", {"message": f"大模型调用异常: {e}", "detail": str(e)})
                 return
 
             # 检查是否有工具调用
-            tool_calls = getattr(full_chunk, "tool_calls", None) if full_chunk else None
-
-            if not tool_calls:
+            if not tool_calls_acc:
                 # 无工具调用，解析完整 JSON，非 JSON 则直接使用原始文本
-                content = full_chunk.content if full_chunk and hasattr(full_chunk, 'content') else ""
+                content = accumulated_content
                 debug_log(f"[llm_chat_loop_stream] Step4 无工具调用，解析JSON响应: content长度={len(content)}")
+                debug_log(f"[llm_chat_loop_stream] LLM完整响应内容: {content[:2000]}{'...' if len(content) > 2000 else ''}")
                 resp_json = self._parse_json_response(content)
 
                 # 发送完整结果事件
@@ -1268,31 +1249,24 @@ class GameMaster:
                 })
                 return
 
-            # 有工具调用，逐个执行
-            debug_log(f"[llm_chat_loop_stream] Step4 收到 {len(tool_calls)} 个工具调用")
+            # 有工具调用
+            tool_calls_list = [tool_calls_acc[i] for i in sorted(tool_calls_acc.keys())]
+            debug_log(f"[llm_chat_loop_stream] Step4 收到 {len(tool_calls_list)} 个工具调用")
 
-            # 将 AIMessage 追加到消息列表
-            langchain_messages.append(full_chunk)
+            # 将 assistant message 追加到消息列表
+            current_messages.append({
+                "role": "assistant",
+                "content": accumulated_content,
+                "tool_calls": tool_calls_list,
+            })
 
-            for idx, tool_call in enumerate(tool_calls):
-                tool_call_id = tool_call.get("id", "") if isinstance(tool_call, dict) else getattr(tool_call, "id", "")
-                function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+            for idx, tool_call in enumerate(tool_calls_list):
+                tool_call_id = tool_call["id"]
+                tool_name = tool_call["function"]["name"]
+                tool_args_str = tool_call["function"]["arguments"]
 
-                if isinstance(tool_call, dict):
-                    tool_name = function.get("name", "")
-                    tool_args_str = function.get("arguments", "{}")
-                else:
-                    tool_name = getattr(tool_call, "name", "") or getattr(function, "name", "")
-                    tool_args_str = getattr(tool_call, "args", {}) if hasattr(tool_call, "args") else "{}"
-
-                # 解析工具参数
                 try:
-                    if isinstance(tool_args_str, str):
-                        tool_args = json.loads(tool_args_str)
-                    elif isinstance(tool_args_str, dict):
-                        tool_args = tool_args_str
-                    else:
-                        tool_args = {}
+                    tool_args = json.loads(tool_args_str)
                 except json.JSONDecodeError as e:
                     error_log(f"工具参数 JSON 解析失败: {e}")
                     tool_args = {}
@@ -1309,10 +1283,11 @@ class GameMaster:
                     result = json.dumps({"error": f"工具执行异常: {e}"}, ensure_ascii=False)
 
                 # 构造工具结果消息追加到消息列表
-                from langchain_core.messages import ToolMessage
-                langchain_messages.append(
-                    ToolMessage(content=result, tool_call_id=tool_call_id)
-                )
+                current_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": result,
+                })
 
         # 超过最大循环次数
         error_log(f"LLM 工具调用循环超过最大次数 {self.MAX_TOOL_LOOP}")
