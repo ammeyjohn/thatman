@@ -22,6 +22,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from gm_storage import GMStorage
 from gm_tools import get_all_tools, match_and_execute_tool
 from gm_logger import debug_log, info_log, warn_log, error_log, set_debug, is_debug
+from action_definition_manager import ActionDefinitionManager, set_action_definition_manager, get_action_definition_manager
+from time_cost_engine import TimeCostEngine, set_time_cost_engine
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -59,6 +61,14 @@ class GameMaster:
         # 4. 初始化 GMStorage 存储层
         self.storage: Optional[GMStorage] = None
         self._init_storage()
+
+        # 4.1 初始化动作定义管理器
+        self.action_def_manager: Optional[ActionDefinitionManager] = None
+        self._init_action_definition_manager()
+
+        # 4.2 初始化耗时计算引擎
+        self.time_cost_engine: Optional[TimeCostEngine] = None
+        self._init_time_cost_engine()
 
         # 5. 加载全量 tools
         self.tools: List[Dict[str, Any]] = get_all_tools()
@@ -206,6 +216,26 @@ class GameMaster:
         except Exception as e:
             error_log(f"GMStorage 存储层初始化失败: {e}")
             self.storage = None
+
+    def _init_action_definition_manager(self) -> None:
+        """初始化动作定义管理器"""
+        try:
+            self.action_def_manager = ActionDefinitionManager(self.storage)
+            set_action_definition_manager(self.action_def_manager)
+            info_log("ActionDefinitionManager 初始化成功")
+        except Exception as e:
+            error_log(f"ActionDefinitionManager 初始化失败: {e}")
+            self.action_def_manager = None
+
+    def _init_time_cost_engine(self) -> None:
+        """初始化耗时计算引擎"""
+        try:
+            self.time_cost_engine = TimeCostEngine(self.action_def_manager)
+            set_time_cost_engine(self.time_cost_engine)
+            info_log("TimeCostEngine 初始化成功")
+        except Exception as e:
+            error_log(f"TimeCostEngine 初始化失败: {e}")
+            self.time_cost_engine = None
 
     # ================================================================
     # 核心方法
@@ -506,8 +536,8 @@ class GameMaster:
         debug_log(f"[handle_chat] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
 
         try:
-            # 0. 检查玩家忙碌状态
-            busy_info = self._check_and_handle_busy(uid)
+            # 0. 检查玩家动作约束状态
+            busy_info = self._check_and_handle_busy(uid, user_input)
             if busy_info:
                 return busy_info
 
@@ -545,15 +575,30 @@ class GameMaster:
             ui_config = resp_json.get("ui_config", {})
             save_flag = resp_json.get("save_flag", "")
             time_cost = resp_json.get("time_cost", 0)
-            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, time_cost={time_cost}, actions={actions}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
+            action_id = resp_json.get("action_id", "")
+            debug_log(f"[handle_chat] Step4 字段提取: save_flag={save_flag}, time_cost={time_cost}, action_id={action_id}, actions={actions}, player_update字段={list(player_update.keys()) if player_update else '[]'}")
 
-            # 5. 耗时处理：推进游戏时间 + 设置忙碌状态
+            # 5. 耗时处理：推进游戏时间 + 设置完整动作状态
             time_advance_info = None
-            busy_state = None
+            action_state = None
+            time_cost_detail = None
             if time_cost and time_cost > 0:
-                debug_log(f"[handle_chat] Step5 耗时处理: time_cost={time_cost}分钟")
-                time_advance_info, busy_state = self._handle_time_cost(
-                    uid, time_cost, player_update.get("current_status", "")
+                debug_log(f"[handle_chat] Step5 耗时处理: time_cost={time_cost}分钟, action_id={action_id}")
+                # 构建上下文数据
+                context = {
+                    "weather": self._get_weather_info().get("weather", ""),
+                    "spirit_tide": self._get_weather_info().get("spirit_tide", False),
+                    "spirit_tide_intensity": self._get_weather_info().get("spirit_tide_intensity", 0),
+                }
+                # 获取玩家数据
+                player_data = self.storage.couch_get_player(uid) if self.storage else {}
+                time_advance_info, action_state, time_cost_detail = self._handle_time_cost(
+                    uid=uid,
+                    time_cost=time_cost,
+                    action_desc=player_update.get("current_status", ""),
+                    action_id=action_id,
+                    player_data=player_data,
+                    context=context,
                 )
             else:
                 debug_log(f"[handle_chat] Step5 跳过耗时处理: time_cost={time_cost}")
@@ -602,8 +647,10 @@ class GameMaster:
             }
             if time_advance_info:
                 result["time_advance"] = time_advance_info
-            if busy_state:
-                result["busy_state"] = busy_state
+            if action_state:
+                result["action_state"] = action_state
+            if time_cost_detail:
+                result["time_cost_detail"] = time_cost_detail
             return result
 
         except Exception as e:
@@ -699,51 +746,112 @@ class GameMaster:
         except Exception as e:
             warn_log(f"关闭 LLM httpx.Client 时出错: {e}")
 
-    def _check_and_handle_busy(self, uid: str) -> Optional[Dict[str, Any]]:
+    def _check_and_handle_busy(self, uid: str, user_input: str = "") -> Optional[Dict[str, Any]]:
         """
-        检查玩家忙碌状态，如果忙碌则返回提示响应
+        检查玩家动作约束状态，如果当前动作禁止该操作则返回约束提示
 
         Args:
             uid: 玩家唯一标识
+            user_input: 用户输入文本，用于识别操作类型
 
         Returns:
-            忙碌提示响应字典，未忙碌时返回 None
+            约束提示响应字典，未受限时返回 None
         """
         try:
             from player_busy_manager import get_player_busy_manager
             busy_mgr = get_player_busy_manager()
-            if busy_mgr and busy_mgr.is_busy(uid):
-                busy_info = busy_mgr.get_busy_info(uid)
-                if busy_info:
-                    remaining = busy_info.get("cooldown_remaining_seconds", 0)
-                    action = busy_info.get("action", "进行中")
-                    info_log(f"玩家忙碌中: uid={uid}, action={action}, remaining={remaining}s")
-                    return {
-                        "dialog": f"你正在{action}之中，尚需片刻方能结束。（剩余约{int(remaining)}秒）",
-                        "actions": ["等待完成", "中断当前行为"],
-                        "player_update": {},
-                        "ui_config": {},
-                        "time_cost": 0,
-                        "busy_state": busy_info,
-                    }
+            if not busy_mgr:
+                return None
+
+            # 检查是否有进行中的动作
+            if not busy_mgr.has_active_action(uid):
+                return None
+
+            # 获取当前动作状态
+            action_state = busy_mgr.get_action_state(uid)
+            if not action_state:
+                return None
+
+            # 识别用户输入的操作类型
+            operation = "unknown"
+            if self.action_def_manager:
+                operation = self.action_def_manager.recognize_operation(user_input)
+
+            # 检查操作是否被允许
+            allowed = busy_mgr.check_operation_allowed(uid, operation)
+            if allowed:
+                # 即时行为允许通过
+                return None
+
+            # 操作被禁止，返回约束提示
+            action_name = action_state.get("action_name", "进行中")
+            remaining = action_state.get("cooldown_remaining_seconds", 0)
+            info_log(f"玩家操作被约束: uid={uid}, operation={operation}, action={action_name}, remaining={remaining}s")
+
+            return {
+                "dialog": f"你正在{action_name}之中，无法进行此操作。如需中断，请明确告知。",
+                "actions": ["等待完成", "中断当前行为"],
+                "player_update": {},
+                "ui_config": {},
+                "time_cost": 0,
+                "action_state": action_state,
+            }
         except Exception as e:
-            error_log(f"检查忙碌状态异常: uid={uid}, 错误: {e}")
+            error_log(f"检查动作约束异常: uid={uid}, 错误: {e}")
         return None
 
-    def _handle_time_cost(self, uid: str, time_cost: int, action_desc: str) -> tuple:
+    def _handle_time_cost(
+        self,
+        uid: str,
+        time_cost: int,
+        action_desc: str,
+        action_id: str = "",
+        player_data: Dict[str, Any] = None,
+        context: Dict[str, Any] = None,
+    ) -> tuple:
         """
-        处理耗时行为：推进游戏时间 + 设置忙碌状态
+        处理耗时行为：推进游戏时间 + 设置完整动作状态
 
         Args:
             uid: 玩家唯一标识
-            time_cost: 游戏分钟数
+            time_cost: LLM 返回的参考游戏分钟数
             action_desc: 行为描述
+            action_id: 动作类型ID
+            player_data: 玩家数据字典
+            context: 上下文数据（环境灵气、天气等）
 
         Returns:
-            (time_advance_info, busy_state) 元组
+            (time_advance_info, action_state, time_cost_detail) 元组
         """
         time_advance_info = None
-        busy_state = None
+        action_state = None
+        time_cost_detail = None
+
+        # 如果没有 action_id，尝试根据描述推断
+        if not action_id and self.action_def_manager:
+            operation = self.action_def_manager.recognize_operation(action_desc)
+            if operation != "unknown":
+                action_id = operation
+
+        # 使用耗时计算引擎计算实际耗时
+        if self.time_cost_engine and action_id:
+            try:
+                time_cost_detail = self.time_cost_engine.calculate(
+                    action_id=action_id,
+                    player_data=player_data or {},
+                    context=context or {},
+                )
+                # 使用引擎计算的最终耗时替代 LLM 的参考值
+                if time_cost_detail and time_cost_detail.get("final_time", 0) > 0:
+                    time_cost = time_cost_detail["final_time"]
+                    debug_log(f"耗时引擎覆盖: action={action_id}, 参考={time_cost} -> 计算={time_cost_detail['final_time']}")
+            except Exception as e:
+                error_log(f"耗时计算引擎异常: action={action_id}, 错误: {e}")
+                time_cost_detail = None
+
+        # 即时行为不设置动作状态
+        if time_cost <= 0:
+            return None, None, time_cost_detail
 
         # 推进游戏时间
         try:
@@ -755,17 +863,52 @@ class GameMaster:
         except Exception as e:
             error_log(f"推进游戏时间失败: uid={uid}, time_cost={time_cost}, 错误: {e}")
 
-        # 设置忙碌状态
+        # 设置完整动作状态
         try:
             from player_busy_manager import get_player_busy_manager
             busy_mgr = get_player_busy_manager()
-            if busy_mgr:
-                busy_state = busy_mgr.set_busy(uid, action_desc or "耗时行为", time_cost)
-                info_log(f"玩家忙碌状态已设置: uid={uid}, action={action_desc}, cooldown={busy_state.get('cooldown_seconds', 0)}s")
-        except Exception as e:
-            error_log(f"设置忙碌状态失败: uid={uid}, 错误: {e}")
+            if busy_mgr and self.action_def_manager:
+                definition = self.action_def_manager.get_action_definition(action_id)
+                if definition:
+                    restrictions = definition.get("restrictions", {})
+                    action_name = definition.get("name", action_desc or "耗时行为")
+                else:
+                    restrictions = {}
+                    action_name = action_desc or "耗时行为"
 
-        return time_advance_info, busy_state
+                # 获取当前游戏时间
+                game_start_time = {}
+                try:
+                    from world_time_service import get_world_time_service_instance
+                    wts = get_world_time_service_instance()
+                    if wts:
+                        ti = wts.get_current_time()
+                        game_start_time = {
+                            "date": ti.get("game_date", ""),
+                            "hour": ti.get("game_hour", 0),
+                            "minute": ti.get("game_minute", 0),
+                        }
+                except Exception:
+                    pass
+
+                base_time = time_cost_detail.get("base_time", time_cost) if time_cost_detail else time_cost
+                modifiers = time_cost_detail.get("modifiers", []) if time_cost_detail else []
+
+                action_state = busy_mgr.start_action(
+                    uid=uid,
+                    action_id=action_id or "unknown",
+                    action_name=action_name,
+                    base_time_cost=base_time,
+                    final_time_cost=time_cost,
+                    modifiers=modifiers,
+                    game_start_time=game_start_time,
+                    restrictions=restrictions,
+                )
+                info_log(f"玩家动作状态已设置: uid={uid}, action={action_id}, cooldown={action_state.get('cooldown_seconds', 0)}s")
+        except Exception as e:
+            error_log(f"设置动作状态失败: uid={uid}, 错误: {e}")
+
+        return time_advance_info, action_state, time_cost_detail
 
     def _get_game_time_info(self) -> str:
         """
@@ -1215,10 +1358,10 @@ class GameMaster:
         debug_log(f"[handle_chat_stream] Step0 入参: uid={uid}, area={current_area}, history轮数={len(session_history)}, input={user_input[:100]}")
 
         try:
-            # 0. 检查玩家忙碌状态
-            busy_info = self._check_and_handle_busy(uid)
+            # 0. 检查玩家动作约束状态
+            busy_info = self._check_and_handle_busy(uid, user_input)
             if busy_info:
-                # 忙碌中，直接返回提示
+                # 动作被约束，直接返回提示
                 yield self._sse_event("result", {
                     "dialog": busy_info.get("dialog", ""),
                     "actions": busy_info.get("actions", []),
@@ -1226,7 +1369,7 @@ class GameMaster:
                     "ui_config": busy_info.get("ui_config", {}),
                     "save_flag": "",
                     "time_cost": 0,
-                    "busy_state": busy_info.get("busy_state"),
+                    "action_state": busy_info.get("action_state"),
                 })
                 yield self._sse_event("done", {})
                 return
@@ -1268,19 +1411,36 @@ class GameMaster:
             finally:
                 self._close_llm(chat_llm)
 
-            # 4. 耗时处理：推进游戏时间 + 设置忙碌状态
+            # 4. 耗时处理：推进游戏时间 + 设置完整动作状态
             time_cost = resp_json.get("time_cost", 0)
+            action_id = resp_json.get("action_id", "")
             if time_cost and time_cost > 0:
-                debug_log(f"[handle_chat_stream] Step4 耗时处理: time_cost={time_cost}分钟")
-                time_advance_info, busy_state = self._handle_time_cost(
-                    uid, time_cost, resp_json.get("player_update", {}).get("current_status", "")
+                debug_log(f"[handle_chat_stream] Step4 耗时处理: time_cost={time_cost}分钟, action_id={action_id}")
+                # 构建上下文数据
+                context = {
+                    "weather": self._get_weather_info().get("weather", ""),
+                    "spirit_tide": self._get_weather_info().get("spirit_tide", False),
+                    "spirit_tide_intensity": self._get_weather_info().get("spirit_tide_intensity", 0),
+                }
+                # 获取玩家数据
+                player_data = self.storage.couch_get_player(uid) if self.storage else {}
+                time_advance_info, action_state, time_cost_detail = self._handle_time_cost(
+                    uid=uid,
+                    time_cost=time_cost,
+                    action_desc=resp_json.get("player_update", {}).get("current_status", ""),
+                    action_id=action_id,
+                    player_data=player_data,
+                    context=context,
                 )
                 # 发送时间推进事件
                 if time_advance_info:
                     yield self._sse_event("time_advance", time_advance_info)
-                # 发送忙碌状态事件
-                if busy_state:
-                    yield self._sse_event("busy_state", busy_state)
+                # 发送动作状态事件
+                if action_state:
+                    yield self._sse_event("action_state", action_state)
+                # 发送耗时详情事件
+                if time_cost_detail:
+                    yield self._sse_event("time_cost_detail", time_cost_detail)
             else:
                 debug_log(f"[handle_chat_stream] Step4 跳过耗时处理: time_cost={time_cost}")
 

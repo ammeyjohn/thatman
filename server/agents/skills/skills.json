@@ -471,6 +471,81 @@
           }
         }
       ]
+    },
+    {
+      "name": "action_definition",
+      "description": "动作类型定义管理工具，用于查询、创建和列出游戏中的动作类型定义。每个动作类型包含基础耗时、难度、约束规则（允许/禁止的操作）、耗时影响因子等",
+      "module": "skills.action_definition",
+      "category": "action",
+      "functions": {
+        "create_action_definition": {
+          "description": "创建或更新动作类型定义",
+          "params": {
+            "definition": {"type": "object", "description": "动作定义字典，必须包含 action_id, name, category, base_time_cost, difficulty, restrictions, time_modifiers 等字段", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, action_id, definition, error 的字典"
+        },
+        "get_action_definition": {
+          "description": "查询指定动作类型定义",
+          "params": {
+            "action_id": {"type": "string", "description": "动作唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, action_id, definition, error 的字典"
+        },
+        "list_action_definitions": {
+          "description": "列出所有动作类型定义，可按类别过滤",
+          "params": {
+            "category": {"type": "string", "description": "类别过滤，如 修炼/战斗/移动/采集/炼制/休息/社交/即时，为空返回所有", "required": false, "default": ""}
+          },
+          "returns": "Dict[str, Any] - 包含 success, total, definitions, error 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "create_action_definition",
+            "description": "创建或更新游戏中的动作类型定义。当玩家执行一个全新类型的动作时，使用此工具保存新动作的定义，供后续复用。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "definition": {
+                  "type": "object",
+                  "description": "动作定义对象，必须包含：action_id(唯一标识), name(显示名称), category(类别), base_time_cost({min, max}), difficulty(难度1-10), restrictions({forbidden_operations, allowed_operations, allow_interrupt, interrupt_penalty}), time_modifiers({realm_factor, spirit_concentration_factor, weather_factor}), description(描述)"
+                }
+              },
+              "required": ["definition"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "get_action_definition",
+            "description": "查询指定动作类型的完整定义，包括耗时、约束规则、中断策略等",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "action_id": {"type": "string", "description": "动作唯一标识，如 meditate_depth, combat, move_region 等"}
+              },
+              "required": ["action_id"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "list_action_definitions",
+            "description": "列出所有已定义的动作类型，可按类别过滤。用于了解游戏中有哪些动作类型及其规则",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "category": {"type": "string", "description": "类别过滤，如 修炼/战斗/移动/采集/炼制/休息/社交/即时，为空返回所有"}
+              }
+            }
+          }
+        }
+      ]
     }
   ]
 }

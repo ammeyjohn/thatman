@@ -18,6 +18,7 @@ export interface CharacterState {
   clothing: string;
   inventory: InventoryItem[];
   busyState: BusyState | null;
+  actionState: ActionState | null;
   lastTimeCost: number;
 }
 
@@ -28,6 +29,39 @@ export interface BusyState {
   cooldownRemainingSeconds: number;
   cooldownEndAt: number;
   startedAt: number;
+}
+
+export interface TimeModifier {
+  source: string;
+  factor: number;
+  minutes: number;
+}
+
+export interface ActionRestrictions {
+  forbiddenOperations: string[];
+  allowedOperations: string[];
+  allowInterrupt: boolean;
+  interruptPenalty: string;
+}
+
+export interface ActionState {
+  isBusy: boolean;
+  actionId: string;
+  actionName: string;
+  baseTimeCost: number;
+  finalTimeCost: number;
+  modifiers: TimeModifier[];
+  gameStartTime: {
+    date: string;
+    hour: number;
+    minute: number;
+  };
+  cooldownSeconds: number;
+  cooldownRemainingSeconds: number;
+  cooldownEndAt: number;
+  startedAt: number;
+  restrictions: ActionRestrictions;
+  status: 'active' | 'interrupted' | 'completed';
 }
 
 export interface TimeAdvanceInfo {

@@ -15,6 +15,7 @@ from gm_logger import debug_log, info_log, warn_log, error_log
 # 导入 read_doc 和 find_skill 模块
 from skills.read_doc import read_doc as _read_doc, list_available_docs as _list_available_docs, search_doc_content as _search_doc_content
 from skills.find_skill import list_all_skills as _list_all_skills, search_skill as _search_skill, get_skill_info as _get_skill_info
+from action_definition_manager import get_action_definition_manager
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -198,6 +199,38 @@ def match_and_execute_tool(tool_name: str, tool_args: Dict[str, Any], storage) -
             meta = tool_args["meta"]
             result = storage.insert_plot_vector(content, meta)
             return json.dumps({"success": result}, ensure_ascii=False)
+
+        # ---- 动作定义操作 ----
+        if tool_name == "create_action_definition":
+            definition = tool_args.get("definition", {})
+            action_mgr = get_action_definition_manager()
+            if not action_mgr:
+                return json.dumps({"error": "动作定义管理器未初始化"}, ensure_ascii=False)
+            try:
+                result = action_mgr.create_or_update_action(definition)
+                return json.dumps({"success": True, "action_id": result.get("action_id"), "definition": result}, ensure_ascii=False)
+            except Exception as e:
+                error_log(f"创建动作定义失败: {e}")
+                return json.dumps({"error": f"创建动作定义失败: {e}"}, ensure_ascii=False)
+
+        if tool_name == "get_action_definition":
+            action_id = tool_args.get("action_id", "")
+            action_mgr = get_action_definition_manager()
+            if not action_mgr:
+                return json.dumps({"error": "动作定义管理器未初始化"}, ensure_ascii=False)
+            result = action_mgr.get_action_definition(action_id)
+            if result:
+                return json.dumps({"success": True, "action_id": action_id, "definition": result}, ensure_ascii=False)
+            else:
+                return json.dumps({"success": False, "action_id": action_id, "error": "动作定义不存在"}, ensure_ascii=False)
+
+        if tool_name == "list_action_definitions":
+            category = tool_args.get("category", "")
+            action_mgr = get_action_definition_manager()
+            if not action_mgr:
+                return json.dumps({"error": "动作定义管理器未初始化"}, ensure_ascii=False)
+            result = action_mgr.list_action_definitions(category)
+            return json.dumps({"success": True, "total": len(result), "definitions": result}, ensure_ascii=False)
 
         # 未知工具
         warn_log(f"未知工具名称: {tool_name}")

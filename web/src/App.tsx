@@ -120,9 +120,9 @@ function App() {
                   gameStore.handleTimeAdvance(data as unknown as import('./types').TimeAdvanceInfo);
                   break;
                 }
-                case 'busy_state': {
+                case 'action_state': {
                   const gameStore = useGameStore.getState();
-                  gameStore.handleBusyState(data as unknown as import('./types').BusyState);
+                  gameStore.handleBusyState(data as unknown as import('./types').ActionState);
                   break;
                 }
                 case 'error':

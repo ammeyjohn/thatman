@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, BusyState, TimeAdvanceInfo } from '../types';
+import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -58,7 +58,7 @@ interface GameState {
   fetchBusyState: () => Promise<void>;
   interruptAction: () => Promise<void>;
   handleTimeAdvance: (timeAdvance: TimeAdvanceInfo) => void;
-  handleBusyState: (busyState: BusyState) => void;
+  handleBusyState: (actionState: ActionState) => void;
   _syncWorldTime: (data: Partial<WorldState> & { gameMinute?: number }) => void;
   _busyStateCheckInterval: number | null;
   _startBusyStateCheck: () => void;
@@ -85,6 +85,7 @@ const initialCharacter: CharacterState = {
   clothing: '',
   inventory: [],
   busyState: null,
+  actionState: null,
   lastTimeCost: 0,
 };
 
@@ -659,19 +660,53 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (!response.ok) return;
 
       const data = await response.json();
+
+      // 映射后端 snake_case 到前端 camelCase
+      const actionState: ActionState | null = data.is_busy && data.action_state
+        ? {
+            isBusy: true,
+            actionId: data.action_state.action_id || '',
+            actionName: data.action_state.action_name || '',
+            baseTimeCost: data.action_state.base_time_cost || 0,
+            finalTimeCost: data.action_state.final_time_cost || 0,
+            modifiers: (data.action_state.modifiers || []).map((m: any) => ({
+              source: m.source || '',
+              factor: m.factor || 0,
+              minutes: m.minutes || 0,
+            })),
+            gameStartTime: {
+              date: data.action_state.game_start_time?.date || '',
+              hour: data.action_state.game_start_time?.hour || 0,
+              minute: data.action_state.game_start_time?.minute || 0,
+            },
+            cooldownSeconds: data.action_state.cooldown_seconds || 0,
+            cooldownRemainingSeconds: data.action_state.cooldown_remaining_seconds || 0,
+            cooldownEndAt: data.action_state.cooldown_end_at || 0,
+            startedAt: data.action_state.started_at || 0,
+            restrictions: {
+              forbiddenOperations: data.action_state.restrictions?.forbidden_operations || [],
+              allowedOperations: data.action_state.restrictions?.allowed_operations || [],
+              allowInterrupt: data.action_state.restrictions?.allow_interrupt ?? true,
+              interruptPenalty: data.action_state.restrictions?.interrupt_penalty || 'none',
+            },
+            status: data.action_state.status || 'active',
+          }
+        : null;
+
       set((state) => ({
         character: {
           ...state.character,
-          busyState: data.is_busy ? data.busy_state : null,
+          actionState,
+          busyState: null, // 逐步废弃旧字段
         },
       }));
 
       // 如果忙碌，启动冷却检查
-      if (data.is_busy) {
+      if (data.is_busy && actionState) {
         useGameStore.getState()._startBusyStateCheck();
       }
     } catch (error) {
-      console.error('[BusyState] 获取忙碌状态失败:', error);
+      console.error('[ActionState] 获取动作状态失败:', error);
     }
   },
 
@@ -692,14 +727,17 @@ export const useGameStore = create<GameState>((set, get) => ({
         set((state) => ({
           character: {
             ...state.character,
+            actionState: null,
             busyState: null,
           },
         }));
         useGameStore.getState()._stopBusyStateCheck();
-        console.log('[BusyState] 已中断耗时行为:', data.message);
+        console.log('[ActionState] 已中断耗时行为:', data.message);
+      } else {
+        console.log('[ActionState] 中断被拒绝:', data.message);
       }
     } catch (error) {
-      console.error('[BusyState] 中断耗时行为失败:', error);
+      console.error('[ActionState] 中断耗时行为失败:', error);
     }
   },
 
@@ -723,16 +761,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     console.log(`[TimeAdvance] 时间推进: +${timeAdvance.advanced_minutes}分钟, 原因=${timeAdvance.reason}`);
   },
 
-  handleBusyState: (busyState: BusyState) => {
+  handleBusyState: (actionState: ActionState) => {
     set((state) => ({
       character: {
         ...state.character,
-        busyState: busyState,
+        actionState: actionState,
+        busyState: null,
       },
     }));
     // 启动冷却检查
     useGameStore.getState()._startBusyStateCheck();
-    console.log(`[BusyState] 进入忙碌状态: ${busyState.action}, 冷却${busyState.cooldownSeconds}秒`);
+    console.log(`[ActionState] 进入动作状态: ${actionState.actionName}, 冷却${actionState.cooldownSeconds}秒`);
   },
 
   _busyStateCheckInterval: null,
@@ -743,23 +782,24 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     // 每2秒检查一次冷却是否结束
     const interval = window.setInterval(() => {
-      const { busyState } = get().character;
-      if (!busyState) {
+      const { actionState } = get().character;
+      if (!actionState) {
         useGameStore.getState()._stopBusyStateCheck();
         return;
       }
 
       const now = Date.now();
-      if (now >= busyState.cooldownEndAt) {
-        // 冷却结束，清除忙碌状态
+      if (now >= actionState.cooldownEndAt) {
+        // 冷却结束，清除动作状态
         set((state) => ({
           character: {
             ...state.character,
+            actionState: null,
             busyState: null,
           },
         }));
         useGameStore.getState()._stopBusyStateCheck();
-        console.log('[BusyState] 冷却结束，忙碌状态已清除');
+        console.log('[ActionState] 冷却结束，动作状态已清除');
       }
     }, 2000);
 

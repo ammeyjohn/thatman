@@ -16,6 +16,7 @@ from layout_generator import LayoutGenerator, get_layout_generator
 from world_time_service import WorldTimeService, set_world_time_service
 from weather_service import WeatherService, set_weather_service
 from player_busy_manager import PlayerBusyManager, set_player_busy_manager, get_player_busy_manager
+from action_definition_manager import ActionDefinitionManager, set_action_definition_manager, get_action_definition_manager
 from routes.auth import _verify_token
 
 # 配置日志
@@ -93,12 +94,31 @@ def get_player_busy_mgr():
     if _player_busy_manager is None:
         try:
             gm = get_gm()
-            _player_busy_manager = PlayerBusyManager(gm.storage)
+            action_def_mgr = get_action_definition_manager()
+            _player_busy_manager = PlayerBusyManager(gm.storage, action_def_mgr)
             set_player_busy_manager(_player_busy_manager)
             info_log("PlayerBusyManager 初始化成功")
         except Exception as e:
             error_log(f"PlayerBusyManager 初始化失败: {e}")
     return _player_busy_manager
+
+
+# 初始化 ActionDefinitionManager 实例
+_action_definition_manager = None
+
+
+def get_action_def_mgr():
+    """获取或初始化 ActionDefinitionManager 实例（单例）"""
+    global _action_definition_manager
+    if _action_definition_manager is None:
+        try:
+            gm = get_gm()
+            _action_definition_manager = ActionDefinitionManager(gm.storage)
+            set_action_definition_manager(_action_definition_manager)
+            info_log("ActionDefinitionManager 初始化成功")
+        except Exception as e:
+            error_log(f"ActionDefinitionManager 初始化失败: {e}")
+    return _action_definition_manager
 
 
 def _get_storage():
@@ -343,9 +363,9 @@ def gm_chat():
         # 附加时间推进信息
         if result.get('time_advance'):
             response_data['time_advance'] = result['time_advance']
-        # 附加忙碌状态信息
-        if result.get('busy_state'):
-            response_data['busy_state'] = result['busy_state']
+        # 附加动作状态信息
+        if result.get('action_state'):
+            response_data['action_state'] = result['action_state']
 
         # 保存 NPC 回复到聊天历史（与 LLM 无关，保证所有聊天都保存）
         try:
@@ -1371,13 +1391,13 @@ def events_sse():
                     "weather": ws.get_current_weather(),
                 }
 
-                # 如有 uid，附加忙碌状态
+                # 如有 uid，附加动作状态
                 if uid:
                     try:
                         busy_mgr = get_player_busy_manager()
                         if busy_mgr:
-                            busy_info = busy_mgr.get_busy_state(uid)
-                            current_state["busy_state"] = busy_info
+                            action_state = busy_mgr.get_action_state(uid)
+                            current_state["action_state"] = action_state
                     except Exception:
                         pass
 
@@ -1569,7 +1589,7 @@ def get_equipment():
 @gm_bp.route('/gm/busy-state', methods=['GET'])
 def get_busy_state():
     """
-    查询玩家忙碌状态
+    查询玩家动作状态
 
     查询参数:
         uid: 玩家唯一ID（必填）
@@ -1578,19 +1598,32 @@ def get_busy_state():
     {
         "uid": "string",
         "is_busy": false,
-        "busy_state": null
+        "action_state": null
     }
     或
     {
         "uid": "string",
         "is_busy": true,
-        "busy_state": {
-            "action": "打坐修炼",
-            "game_minutes": 120,
+        "action_state": {
+            "action_id": "meditate_depth",
+            "action_name": "深度修炼",
+            "base_time_cost": 180,
+            "final_time_cost": 135,
+            "modifiers": [
+                {"source": "功法《引气诀》", "factor": -0.15, "minutes": -27}
+            ],
+            "game_start_time": {"date": "...", "hour": 10, "minute": 0},
             "cooldown_seconds": 50,
             "cooldown_remaining_seconds": 35.2,
             "cooldown_end_at": 1717834567890,
-            "started_at": 1717834517890
+            "started_at": 1717834517890,
+            "restrictions": {
+                "forbidden_operations": ["move", "combat", "gather", "craft"],
+                "allowed_operations": ["chat", "view_inventory", "view_equipment", "check_status"],
+                "allow_interrupt": true,
+                "interrupt_penalty": "partial"
+            },
+            "status": "active"
         }
     }
     """
@@ -1607,15 +1640,15 @@ def get_busy_state():
 
     try:
         busy_mgr = get_player_busy_mgr()
-        busy_info = busy_mgr.get_busy_info(uid) if busy_mgr else None
+        action_state = busy_mgr.get_action_state(uid) if busy_mgr else None
 
         return jsonify({
             'uid': uid,
-            'is_busy': busy_info is not None,
-            'busy_state': busy_info,
+            'is_busy': action_state is not None,
+            'action_state': action_state,
         })
     except Exception as e:
-        error_log(f"获取玩家忙碌状态失败: {e}")
+        error_log(f"获取玩家动作状态失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',
@@ -1639,7 +1672,9 @@ def interrupt_action():
     {
         "uid": "string",
         "interrupted": true,
-        "message": "已中断打坐修炼"
+        "message": "已中断【深度修炼】，获得部分效果（50%）",
+        "penalty": "partial",
+        "action_state": {...}
     }
     """
     data = request.get_json()
@@ -1670,25 +1705,15 @@ def interrupt_action():
             return jsonify({
                 'uid': uid,
                 'interrupted': False,
-                'message': '忙碌状态管理器不可用',
+                'message': '动作状态管理器不可用',
             })
 
-        busy_info = busy_mgr.get_busy_info(uid)
-        if not busy_info:
-            return jsonify({
-                'uid': uid,
-                'interrupted': False,
-                'message': '当前没有进行中的耗时行为',
-            })
-
-        action = busy_info.get("action", "耗时行为")
-        busy_mgr.clear_busy(uid)
-        info_log(f"玩家中断耗时行为: uid={uid}, action={action}")
+        result = busy_mgr.interrupt_action(uid)
+        info_log(f"玩家中断耗时行为: uid={uid}, result={result}")
 
         return jsonify({
             'uid': uid,
-            'interrupted': True,
-            'message': f'已中断{action}',
+            **result,
         })
     except Exception as e:
         error_log(f"中断耗时行为失败: {e}")

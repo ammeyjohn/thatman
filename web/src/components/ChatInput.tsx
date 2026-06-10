@@ -51,7 +51,7 @@ export function ChatInput() {
   const [busyRemaining, setBusyRemaining] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const busyState = character.busyState;
+  const actionState = character.actionState;
 
   // 注册光标处插入文本的实现
   useEffect(() => {
@@ -59,22 +59,22 @@ export function ChatInput() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 更新忙碌状态倒计时
+  // 更新动作状态倒计时
   useEffect(() => {
-    if (!busyState) {
+    if (!actionState) {
       setBusyRemaining(0);
       return;
     }
 
     const updateRemaining = () => {
-      const remaining = Math.max(0, Math.ceil((busyState.cooldownEndAt - Date.now()) / 1000));
+      const remaining = Math.max(0, Math.ceil((actionState.cooldownEndAt - Date.now()) / 1000));
       setBusyRemaining(remaining);
     };
 
     updateRemaining();
     const interval = setInterval(updateRemaining, 1000);
     return () => clearInterval(interval);
-  }, [busyState]);
+  }, [actionState]);
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -116,12 +116,12 @@ export function ChatInput() {
   return (
     <div data-name="chat-input" className="p-4 bg-gradient-to-t from-[#0a0a0f] to-[#0d1f1f] border-t border-[#2d5a5a]/30 flex-shrink-0">
       {/* Busy State Banner */}
-      {busyState && busyRemaining > 0 && (
-        <div data-name="busy-state" className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-[#2d5a5a]/20 border border-[#c9a227]/30 rounded-lg">
+      {actionState && busyRemaining > 0 && (
+        <div data-name="action-state" className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-[#2d5a5a]/20 border border-[#c9a227]/30 rounded-lg">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-[#c9a227] animate-pulse" />
             <span className="text-sm text-[#c9a227]">
-              {busyState.action}中... 剩余 {busyRemaining}s
+              {actionState.actionName}中... 剩余 {busyRemaining}s
             </span>
           </div>
           <button

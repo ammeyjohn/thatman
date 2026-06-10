@@ -223,7 +223,7 @@ async function streamGmChat(
             case 'time_advance':
               onTimeAdvance?.(data);
               break;
-            case 'busy_state':
+            case 'action_state':
               onBusyState?.(data);
               break;
             case 'saved':
@@ -622,10 +622,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const gameStore = useGameStore.getState();
           gameStore.handleTimeAdvance(data as unknown as import('../types').TimeAdvanceInfo);
         },
-        // onBusyState
+        // onActionState
         (data) => {
           const gameStore = useGameStore.getState();
-          gameStore.handleBusyState(data as unknown as import('../types').BusyState);
+          gameStore.handleBusyState(data as unknown as import('../types').ActionState);
         },
         // onSaved: 收到后端保存的 NPC 消息 id，更新本地消息 id
         (data) => {
@@ -933,10 +933,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const gameStore = useGameStore.getState();
           gameStore.handleTimeAdvance(data as unknown as import('../types').TimeAdvanceInfo);
         },
-        // onBusyState
+        // onActionState
         (data) => {
           const gameStore = useGameStore.getState();
-          gameStore.handleBusyState(data as unknown as import('../types').BusyState);
+          gameStore.handleBusyState(data as unknown as import('../types').ActionState);
         },
         // onSaved: 收到后端保存的 NPC 消息 id，更新本地消息 id
         (data) => {

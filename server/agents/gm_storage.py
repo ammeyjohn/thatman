@@ -213,6 +213,7 @@ class GMStorage:
         self._db_layouts: str = f"{self._couch_db_prefix}layouts"
         self._db_world_time: str = f"{self._couch_db_prefix}world_time"
         self._db_weather: str = f"{self._couch_db_prefix}weather"
+        self._db_action_definitions: str = f"{self._couch_db_prefix}action_definitions"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -273,6 +274,7 @@ class GMStorage:
             self._db_layouts,
             self._db_world_time,
             self._db_weather,
+            self._db_action_definitions,
         ]
         for db_name in db_names:
             try:
@@ -513,6 +515,100 @@ class GMStorage:
         except Exception as e:
             error_log(f"保存玩家数据异常: {uid}, 错误: {e}")
             return {}
+
+    # ================================================================
+    # CouchDB 动作定义操作
+    # ================================================================
+
+    def couch_get_action_definition(self, action_id: str) -> dict:
+        """
+        获取动作类型定义
+
+        Args:
+            action_id: 动作唯一标识
+
+        Returns:
+            动作定义数据字典，失败返回空字典
+        """
+        try:
+            resp = self._couch_request("GET", f"/{self._db_action_definitions}/{action_id}")
+            if resp.status_code == 200:
+                data = resp.json()
+                debug_log(f"获取动作定义成功: {action_id}")
+                return data
+            elif resp.status_code == 404:
+                debug_log(f"动作定义不存在: {action_id}")
+                return {}
+            else:
+                warn_log(f"获取动作定义失败: {action_id}, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"获取动作定义异常: {action_id}, 错误: {e}")
+            return {}
+
+    def couch_save_action_definition(self, action_id: str, data: dict) -> dict:
+        """
+        保存动作类型定义（新增或更新）
+
+        Args:
+            action_id: 动作唯一标识
+            data: 动作定义数据
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            existing = self.couch_get_action_definition(action_id)
+            if existing and "_rev" in existing:
+                data["_rev"] = existing["_rev"]
+
+            resp = self._couch_request("PUT", f"/{self._db_action_definitions}/{action_id}", json_data=data)
+            if resp.status_code in (201, 202):
+                info_log(f"保存动作定义成功: {action_id}")
+                return resp.json()
+            else:
+                warn_log(f"保存动作定义失败: {action_id}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存动作定义异常: {action_id}, 错误: {e}")
+            return {}
+
+    def couch_list_action_definitions(self, category: str = "") -> list:
+        """
+        列出所有动作类型定义
+
+        Args:
+            category: 类别过滤，为空则返回所有
+
+        Returns:
+            动作定义列表
+        """
+        try:
+            selector: Dict[str, Any] = {}
+            if category:
+                selector["category"] = category
+
+            body = {
+                "selector": selector,
+                "limit": 1000,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_action_definitions}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                debug_log(f"列出动作定义: category={category}, 找到 {len(docs)} 条")
+                return docs
+            else:
+                warn_log(f"列出动作定义失败: 状态码: {resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"列出动作定义异常: 错误: {e}")
+            return []
 
     def couch_get_entity(self, entity_id: str) -> dict:
         """
