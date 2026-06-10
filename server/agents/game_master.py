@@ -559,6 +559,7 @@ class GameMaster:
                 debug_log(f"[handle_chat] Step5 跳过耗时处理: time_cost={time_cost}")
 
             # 6. 落库分发
+            # 角色状态变更强制保存：player_update 非空时始终保存到数据库
             if self.storage and save_flag:
                 debug_log(f"[handle_chat] Step6 开始落库分发: flag={save_flag}, uid={uid}")
                 try:
@@ -567,8 +568,27 @@ class GameMaster:
                     debug_log(f"[handle_chat] Step6 落库分发完成: flag={save_flag}")
                 except Exception as e:
                     error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
+            elif self.storage and player_update:
+                # save_flag 为空但有 player_update，强制保存角色状态
+                debug_log(f"[handle_chat] Step6 强制保存角色状态: uid={uid}, player_update字段={list(player_update.keys())}")
+                try:
+                    self.storage.save_dispatcher("player_update", uid, current_area, resp_json)
+                    info_log(f"强制保存角色状态完成: uid={uid}")
+                except Exception as e:
+                    error_log(f"强制保存角色状态失败: uid={uid}, 错误: {e}")
             else:
-                debug_log(f"[handle_chat] Step6 跳过落库: save_flag={save_flag}, storage={'已初始化' if self.storage else '未初始化'}")
+                debug_log(f"[handle_chat] Step6 跳过落库: save_flag={save_flag}, player_update为空")
+
+            # 6.5 实体自动持久化（独立于 save_flag 机制）
+            entities = resp_json.get("entities", [])
+            if self.storage and entities:
+                debug_log(f"[handle_chat] Step6.5 实体自动持久化: entities数={len(entities)}")
+                try:
+                    new_count = self.storage.save_entities_from_chat(uid, current_area, entities)
+                    if new_count > 0:
+                        info_log(f"实体自动持久化完成: uid={uid}, 新增={new_count}")
+                except Exception as e:
+                    error_log(f"实体自动持久化失败: uid={uid}, 错误: {e}")
 
             # 7. 返回结果（不暴露 save_flag 给前端）
             debug_log(f"[handle_chat] Step7 返回结果: dialog长度={len(dialog)}, actions={actions}, time_cost={time_cost}")
@@ -578,6 +598,7 @@ class GameMaster:
                 "player_update": player_update,
                 "ui_config": ui_config,
                 "time_cost": time_cost,
+                "entities": entities,
             }
             if time_advance_info:
                 result["time_advance"] = time_advance_info
@@ -1264,7 +1285,9 @@ class GameMaster:
                 debug_log(f"[handle_chat_stream] Step4 跳过耗时处理: time_cost={time_cost}")
 
             # 5. 落库分发
+            # 角色状态变更强制保存：player_update 非空时始终保存到数据库
             save_flag = resp_json.get("save_flag", "")
+            player_update = resp_json.get("player_update", {})
             if self.storage and save_flag:
                 debug_log(f"[handle_chat_stream] Step5 开始落库分发: flag={save_flag}, uid={uid}")
                 try:
@@ -1272,6 +1295,25 @@ class GameMaster:
                     info_log(f"落库完成: uid={uid}, flag={save_flag}")
                 except Exception as e:
                     error_log(f"落库分发失败: uid={uid}, flag={save_flag}, 错误: {e}")
+            elif self.storage and player_update:
+                # save_flag 为空但有 player_update，强制保存角色状态
+                debug_log(f"[handle_chat_stream] Step5 强制保存角色状态: uid={uid}")
+                try:
+                    self.storage.save_dispatcher("player_update", uid, current_area, resp_json)
+                    info_log(f"强制保存角色状态完成: uid={uid}")
+                except Exception as e:
+                    error_log(f"强制保存角色状态失败: uid={uid}, 错误: {e}")
+
+            # 5.5 实体自动持久化（独立于 save_flag 机制）
+            entities = resp_json.get("entities", [])
+            if self.storage and entities:
+                debug_log(f"[handle_chat_stream] Step5.5 实体自动持久化: entities数={len(entities)}")
+                try:
+                    new_count = self.storage.save_entities_from_chat(uid, current_area, entities)
+                    if new_count > 0:
+                        info_log(f"实体自动持久化完成: uid={uid}, 新增={new_count}")
+                except Exception as e:
+                    error_log(f"实体自动持久化失败: uid={uid}, 错误: {e}")
 
             # 6. 发送完成事件
             yield self._sse_event("done", {})

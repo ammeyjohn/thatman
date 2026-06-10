@@ -295,73 +295,68 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                 />
               ) : (
                 <div className="markdown-body text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
-                  {message.entities && message.entities.length > 0 ? (
-                    // 有实体：直接渲染高亮文本
-                    <div className="text-[#e8e4dc] text-sm leading-relaxed break-words overflow-hidden min-w-0">
-                      {highlightEntitiesInText(message.content, message.entities).map((part, i) => {
-                        if (part.entity) {
-                          const color = ENTITY_COLORS[part.entity.type] || '#3d9a9a';
-                          return (
-                            <span
-                              key={i}
-                              className="cursor-pointer rounded-sm px-0.5 transition-all duration-200 hover:brightness-130"
-                              style={{
-                                color,
-                                textShadow: `0 0 6px ${color}40`,
-                              }}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleEntityClick(part.entity!.name);
-                              }}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleEntityClick(part.entity!.name);
-                                }
-                              }}
-                            >
-                              {part.text}
-                            </span>
-                          );
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                      a: ({ href, children }) => (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#3d9a9a] hover:underline transition-all duration-200"
+                        >
+                          {children}
+                        </a>
+                      ),
+                      // 在文本节点中高亮实体名称
+                      text: ({ children }) => {
+                        const text = String(children);
+                        if (!message.entities || message.entities.length === 0) {
+                          return <>{text}</>;
                         }
-                        // 普通文本：处理换行
+                        const parts = highlightEntitiesInText(text, message.entities);
                         return (
-                          <span key={i}>
-                            {part.text.split('\n').map((line, j) => (
-                              <span key={j}>
-                                {j > 0 && <br />}
-                                {line}
-                              </span>
-                            ))}
-                          </span>
+                          <>
+                            {parts.map((part, i) => {
+                              if (part.entity) {
+                                const color = ENTITY_COLORS[part.entity.type] || '#3d9a9a';
+                                return (
+                                  <span
+                                    key={i}
+                                    className="cursor-pointer rounded-sm px-0.5 transition-all duration-200 hover:brightness-130"
+                                    style={{
+                                      color,
+                                      textShadow: `0 0 6px ${color}40`,
+                                    }}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleEntityClick(part.entity!.name);
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleEntityClick(part.entity!.name);
+                                      }
+                                    }}
+                                  >
+                                    {part.text}
+                                  </span>
+                                );
+                              }
+                              return <span key={i}>{part.text}</span>;
+                            })}
+                          </>
                         );
-                      })}
-                    </div>
-                  ) : (
-                    // 无实体：使用 ReactMarkdown 渲染
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                        a: ({ href, children }) => (
-                          <a
-                            href={href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[#3d9a9a] hover:underline transition-all duration-200"
-                          >
-                            {children}
-                          </a>
-                        ),
-                      }}
-                    >
-                      {formatTextWithLineBreaks(message.content)}
-                    </ReactMarkdown>
-                  )}
+                      },
+                    }}
+                  >
+                    {formatTextWithLineBreaks(message.content)}
+                  </ReactMarkdown>
                   {isLoading && message.sender === 'npc' && (
                     <span className="inline-block w-2 h-4 bg-[#3d9a9a] animate-pulse ml-1 align-middle" />
                   )}

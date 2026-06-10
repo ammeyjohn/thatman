@@ -101,6 +101,7 @@ export interface Entity {
   name: string;
   type: 'character' | 'place' | 'weapon' | 'technique' | 'item';
   desc: string;
+  detail?: Record<string, string>;
 }
 
 export interface ChatMessage {

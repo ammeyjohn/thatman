@@ -540,6 +540,143 @@ class GMStorage:
             error_log(f"获取实体数据异常: {entity_id}, 错误: {e}")
             return {}
 
+    def couch_find_entity_by_name(self, name: str, entity_type: str = "") -> list:
+        """
+        按名称查询实体，返回匹配的文档列表
+
+        Args:
+            name: 实体名称
+            entity_type: 实体类型过滤，为空则不过滤
+
+        Returns:
+            匹配的实体文档列表
+        """
+        try:
+            selector: Dict[str, Any] = {"name": name}
+            if entity_type:
+                selector["entity_type"] = entity_type
+
+            body = {
+                "selector": selector,
+                "limit": 10,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_entities}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                debug_log(f"按名称查询实体: name={name}, type={entity_type}, 找到 {len(docs)} 条")
+                return docs
+            else:
+                warn_log(f"按名称查询实体失败: name={name}, 状态码: {resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"按名称查询实体异常: name={name}, 错误: {e}")
+            return []
+
+    def save_entities_from_chat(self, uid: str, current_area: str, entities: list) -> int:
+        """
+        将聊天中出现的实体自动保存到数据库
+
+        - 按名称+类型去重，已存在则跳过
+        - 将 entities 格式转换为 entity_data 格式
+        - 自动生成 entity_id
+        - 保存实体数据到 CouchDB
+        - 保存世界记忆
+
+        Args:
+            uid: 玩家唯一标识
+            current_area: 当前地域
+            entities: LLM 响应中的 entities 数组
+
+        Returns:
+            新增实体数量
+        """
+        if not entities:
+            return 0
+
+        # entities type 到 entity_type 的映射
+        type_mapping = {
+            "character": "npc",
+            "place": "area",
+            "weapon": "equip",
+            "technique": "technique",
+            "item": "treasure",
+        }
+
+        # detail 字段到 attr 的提取映射
+        attr_keys = {
+            "character": "realm",
+            "place": "spirit_level",
+            "weapon": "grade",
+            "technique": "grade",
+            "item": "grade",
+        }
+
+        new_count = 0
+
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+
+            name = entity.get("name", "")
+            entity_type_raw = entity.get("type", "")
+            desc = entity.get("desc", "")
+            detail = entity.get("detail", {})
+
+            if not name or not entity_type_raw:
+                continue
+
+            entity_type = type_mapping.get(entity_type_raw, entity_type_raw)
+
+            # 去重：按名称+类型查询是否已存在
+            existing = self.couch_find_entity_by_name(name, entity_type)
+            if existing:
+                debug_log(f"实体已存在，跳过: name={name}, type={entity_type}")
+                continue
+
+            # 生成唯一 entity_id
+            entity_id = f"entity_{uuid.uuid4().hex[:12]}"
+
+            # 从 detail 中提取 attr
+            attr_key = attr_keys.get(entity_type_raw, "")
+            attr_value = detail.get(attr_key, "") if detail and attr_key else ""
+
+            # 构建实体数据
+            entity_data = {
+                "entity_type": entity_type,
+                "name": name,
+                "base_info": desc,
+                "attr": attr_value,
+                "birth_story": "",
+                "belong_area": current_area,
+                "source": "chat",
+            }
+
+            # 保留 detail 原始数据
+            if detail and isinstance(detail, dict):
+                entity_data["detail"] = detail
+
+            # 保存实体
+            debug_log(f"[save_entities_from_chat] 保存实体: id={entity_id}, name={name}, type={entity_type}")
+            self.couch_save_entity(entity_id, entity_data)
+            new_count += 1
+
+            # 保存世界记忆
+            try:
+                self.save_memory("world_global_history", f"新实体出现：{name}（类型：{entity_type}）{desc}")
+            except Exception as e:
+                warn_log(f"保存实体世界记忆失败: name={name}, 错误: {e}")
+
+        if new_count > 0:
+            info_log(f"实体自动持久化完成: uid={uid}, 新增={new_count}/{len(entities)}")
+
+        return new_count
+
     def couch_save_entity(self, entity_id: str, entity_data: dict) -> dict:
         """
         保存实体数据（新增或更新）
@@ -948,6 +1085,7 @@ class GMStorage:
         weather_desc: Optional[str] = None,
         spirit_tide: Optional[bool] = None,
         doc_id: Optional[str] = None,
+        entities: Optional[list] = None,
     ) -> dict:
         """
         保存单条聊天消息到 thatman_chat_history
@@ -967,6 +1105,7 @@ class GMStorage:
             weather_desc: 天气描述，如"微风"
             spirit_tide: 灵潮状态
             doc_id: 可选，指定文档 ID，不传则自动生成
+            entities: 实体列表（仅 NPC 消息）
 
         Returns:
             CouchDB 写入响应，失败返回空字典
@@ -999,6 +1138,8 @@ class GMStorage:
                 doc["weather_desc"] = weather_desc
             if spirit_tide is not None:
                 doc["spirit_tide"] = spirit_tide
+            if entities:
+                doc["entities"] = entities
 
             resp = self._couch_request("PUT", f"/{self._db_chat_history}/{doc_id}", json_data=doc)
             if resp.status_code in (201, 202):

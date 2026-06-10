@@ -310,6 +310,7 @@ def gm_chat():
                             game_date=time_loc["game_date"],
                             game_shichen=time_loc["game_shichen"],
                             location=time_loc["location"],
+                            entities=result_data.get('entities'),
                         )
                         npc_message_id = save_resp.get('id') if save_resp else None
                     except Exception as e:
@@ -337,6 +338,7 @@ def gm_chat():
             'player_update': result.get('player_update', {}),
             'ui_config': result.get('ui_config', {'left_open': [], 'right_open': []}),
             'time_cost': result.get('time_cost', 0),
+            'entities': result.get('entities', []),
         }
         # 附加时间推进信息
         if result.get('time_advance'):
@@ -364,6 +366,7 @@ def gm_chat():
                 weather=time_loc["weather"],
                 weather_desc=time_loc["weather_desc"],
                 spirit_tide=time_loc["spirit_tide"],
+                entities=response_data.get('entities'),
             )
             if save_resp and save_resp.get('id'):
                 response_data['npc_message_id'] = save_resp['id']
@@ -727,18 +730,25 @@ def generate_layout():
         # 获取 LayoutGenerator 实例
         layout_gen = get_layout_generator(gm.config, storage)
 
-        # 如果未提供 current_data，从数据库获取
-        if not current_data:
-            if panel_type == 'character':
-                current_data = storage.couch_get_player(uid)
-                # 移除 CouchDB 内部字段
-                current_data.pop('_id', None)
-                current_data.pop('_rev', None)
-            else:
-                # 世界数据从最新快照获取
+        # 双源校验：优先从数据库获取最新数据，数据库读取失败时回退到前端传入数据
+        if panel_type == 'character':
+            try:
+                db_data = storage.couch_get_player(uid)
+                if db_data and isinstance(db_data, dict) and len(db_data) > 2:  # 至少有 _id 和 _rev 之外的字段
+                    db_data.pop('_id', None)
+                    db_data.pop('_rev', None)
+                    if db_data:  # 数据库有有效数据，优先使用
+                        current_data = {**current_data, **db_data} if current_data else db_data
+                        info_log(f"布局生成使用数据库角色数据: uid={uid}, 字段={list(db_data.keys())}")
+            except Exception as e:
+                error_log(f"从数据库获取角色数据失败，使用前端传入数据: {e}")
+        elif not current_data:
+            try:
                 current_data = storage.couch_get_last_world_snap()
                 current_data.pop('_id', None)
                 current_data.pop('_rev', None)
+            except Exception as e:
+                error_log(f"从数据库获取世界快照失败: {e}")
 
         info_log(f"生成布局请求: uid={uid}, panel_type={panel_type}")
 
