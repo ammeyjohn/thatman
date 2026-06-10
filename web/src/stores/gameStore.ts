@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo, KeyEvent } from '../types';
+import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -66,6 +66,10 @@ interface GameState {
   keyEvents: KeyEvent[];
   fetchKeyEvents: () => Promise<void>;
   deleteKeyEvent: (eventId: string) => Promise<void>;
+  historyList: CharacterHistory[];
+  historyDates: string[];
+  fetchHistory: (gameDate?: string) => Promise<void>;
+  fetchHistoryDates: () => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -139,6 +143,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   _layoutGenerationQueue: { character: false, world: false },
   eventsSSE: null,
   keyEvents: [],
+  historyList: [],
+  historyDates: [],
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -875,6 +881,76 @@ export const useGameStore = create<GameState>((set, get) => ({
       console.log('[KeyEvents] 关键事件已删除:', eventId);
     } catch (error) {
       console.error('删除关键事件失败:', error);
+    }
+  },
+
+  fetchHistory: async (gameDate?: string) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      let url = `${config.API_BASE_URL}/gm/history?uid=${encodeURIComponent(uid)}`;
+      if (gameDate) {
+        url += `&game_date=${encodeURIComponent(gameDate)}`;
+      }
+      const response = await fetch(url, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取历史记录失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.history)) {
+        const historyList: CharacterHistory[] = data.history.map((h: Record<string, unknown>) => ({
+          id: (h._id as string) || (h.id as string) || '',
+          uid: (h.uid as string) || '',
+          gameDate: (h.game_date as string) || '',
+          entries: (Array.isArray(h.entries) ? h.entries : []).map((e: Record<string, unknown>) => ({
+            period: (e.period as string) || '',
+            summary: (e.summary as string) || '',
+            location: (e.location as string) || '',
+            realmSnapshot: (e.realm_snapshot as string) || '',
+            keyChanges: Array.isArray(e.key_changes) ? e.key_changes as string[] : [],
+            sourceMessageId: (e.source_message_id as string) || undefined,
+            timestamp: (e.timestamp as number) || 0,
+          })),
+          dailySummary: (h.daily_summary as string) || '',
+          createdAt: (h.created_at as string) || '',
+          updatedAt: (h.updated_at as string) || '',
+        }));
+        set({ historyList });
+        console.log('[History] 历史记录加载成功:', historyList.length);
+      }
+      if (Array.isArray(data.dates)) {
+        set({ historyDates: data.dates as string[] });
+      }
+    } catch (error) {
+      console.error('获取历史记录失败:', error);
+    }
+  },
+
+  fetchHistoryDates: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/history/dates?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取历史日期失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.dates)) {
+        set({ historyDates: data.dates as string[] });
+        console.log('[History] 历史日期加载成功:', data.dates.length);
+      }
+    } catch (error) {
+      console.error('获取历史日期失败:', error);
     }
   },
 }));

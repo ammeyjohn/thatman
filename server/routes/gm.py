@@ -209,6 +209,82 @@ def _async_extract_and_save_events(uid: str, dialog_text: str, user_input: str, 
         error_log(f"异步事件提取失败: uid={uid}, 错误: {e}")
 
 
+def _async_extract_and_save_history(
+    uid: str,
+    dialog_text: str,
+    user_input: str,
+    game_date: str,
+    game_shichen: str,
+    location: str,
+    realm_info: str,
+    source_message_id: str = "",
+):
+    """
+    异步提取角色历史进程并保存到数据库
+
+    在后台线程中执行，不阻塞主响应。
+
+    Args:
+        uid: 玩家唯一标识
+        dialog_text: NPC 回复文本
+        user_input: 玩家输入文本
+        game_date: 游戏日期
+        game_shichen: 游戏时辰
+        location: 当前地点
+        realm_info: 当前境界信息
+        source_message_id: 来源消息 ID
+    """
+    try:
+        if not game_date:
+            debug_log("游戏日期为空，跳过历史提取")
+            return
+
+        gm = get_gm()
+        if not gm or not gm.storage:
+            return
+
+        from history_extractor import get_history_extractor
+        extractor = get_history_extractor(gm.config)
+
+        # 提取历史 entry
+        entry = extractor.extract_history_entry(
+            dialog_text=dialog_text,
+            user_input=user_input,
+            game_date=game_date,
+            game_shichen=game_shichen,
+            location=location,
+            realm_info=realm_info,
+        )
+
+        if not entry:
+            debug_log(f"未提取到历史 entry: uid={uid}, game_date={game_date}")
+            return
+
+        # 补充 source_message_id 和 timestamp
+        import time as time_mod
+        entry["source_message_id"] = source_message_id
+        entry["timestamp"] = int(time_mod.time() * 1000)
+
+        # 检查是否需要生成日总结
+        daily_summary = ""
+        existing_docs = gm.storage.couch_get_history(uid, game_date=game_date)
+        if existing_docs:
+            existing = existing_docs[0]
+            entries = existing.get("entries", [])
+            # 追加新 entry 后，如果 entries >= 2 则生成日总结
+            if len(entries) + 1 >= 2:
+                all_entries = entries + [entry]
+                daily_summary = extractor.generate_daily_summary(all_entries) or ""
+        # 首条 entry 时不生成日总结（延迟到第2条）
+
+        # 保存
+        gm.storage.couch_save_history_entry(uid, game_date, entry, daily_summary=daily_summary)
+        info_log(f"异步历史提取完成: uid={uid}, game_date={game_date}")
+
+    except Exception as e:
+        error_log(f"异步历史提取失败: uid={uid}, 错误: {e}")
+
+
 @gm_bp.route('/gm/chat', methods=['POST'])
 def gm_chat():
     """
@@ -386,6 +462,23 @@ def gm_chat():
                     )
                     t.start()
 
+                    # 异步提取角色历史进程
+                    player_update = result_data.get('player_update', {})
+                    realm_info = ""
+                    if player_update:
+                        realm = player_update.get('realm', '')
+                        realm_stage = player_update.get('realm_stage', '')
+                        if realm and realm_stage:
+                            realm_info = f"{realm}·{realm_stage}"
+                        elif realm:
+                            realm_info = realm
+                    t2 = threading.Thread(
+                        target=_async_extract_and_save_history,
+                        args=(uid, event_dialog, user_input, time_loc["game_date"], time_loc["game_shichen"], time_loc["location"], realm_info, npc_message_id or ""),
+                        daemon=True,
+                    )
+                    t2.start()
+
             return Response(generate_stream(), mimetype='text/event-stream',
                           headers={
                               'Cache-Control': 'no-cache',
@@ -447,6 +540,23 @@ def gm_chat():
                 daemon=True,
             )
             t.start()
+
+            # 异步提取角色历史进程
+            player_update = response_data.get('player_update', {})
+            realm_info = ""
+            if player_update:
+                realm = player_update.get('realm', '')
+                realm_stage = player_update.get('realm_stage', '')
+                if realm and realm_stage:
+                    realm_info = f"{realm}·{realm_stage}"
+                elif realm:
+                    realm_info = realm
+            t2 = threading.Thread(
+                target=_async_extract_and_save_history,
+                args=(uid, response_data['dialog'], user_input, time_loc["game_date"], time_loc["game_shichen"], time_loc["location"], realm_info, response_data.get('npc_message_id', '')),
+                daemon=True,
+            )
+            t2.start()
 
         debug_log(f"返回响应: {json.dumps(response_data, ensure_ascii=False)}")
         return jsonify(response_data)
@@ -1888,6 +1998,94 @@ def delete_key_event(event_id: str):
             }), 500
     except Exception as e:
         error_log(f"删除关键事件失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/history', methods=['GET'])
+def get_history():
+    """
+    获取角色历史进程
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+        game_date: 游戏日期过滤（可选，如"天元三千六百年·正月初一"）
+    """
+    uid = request.args.get('uid', '')
+    game_date = request.args.get('game_date', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        docs = storage.couch_get_history(uid, game_date=game_date)
+        # 移除 CouchDB 内部字段
+        history = []
+        for doc in docs:
+            doc.pop('_rev', None)
+            doc.pop('_id', None)
+            history.append(doc)
+
+        # 同时获取所有可用日期
+        dates = storage.couch_get_history_dates(uid)
+
+        return jsonify({
+            'uid': uid,
+            'history': history,
+            'dates': dates,
+            'total': len(history),
+        })
+    except Exception as e:
+        error_log(f"获取历史记录失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/history/dates', methods=['GET'])
+def get_history_dates():
+    """
+    获取角色所有有历史记录的游戏日期
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        dates = storage.couch_get_history_dates(uid)
+        return jsonify({
+            'uid': uid,
+            'dates': dates,
+        })
+    except Exception as e:
+        error_log(f"获取历史日期失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

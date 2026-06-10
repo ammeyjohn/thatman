@@ -5,6 +5,7 @@ import { useGameStore } from '../stores/gameStore';
 import { BackpackDialog } from './BackpackDialog';
 import { EquipmentDialog } from './EquipmentDialog';
 import { EventDialog } from './EventDialog';
+import { HistoryDialog } from './HistoryDialog';
 
 // 注册光标处插入文本的实现到 chatStore
 function registerInsertTextAtCursor(
@@ -42,15 +43,17 @@ const quickActions = [
   { label: '装备', icon: '🛡️', command: '__equipment__' },
   { label: '储物袋', icon: '🎒', command: '__backpack__' },
   { label: '事件', icon: '📜', command: '__events__' },
+  { label: '历史', icon: '📖', command: '__history__' },
 ];
 
 export function ChatInput() {
   const { inputValue, setInputValue, sendMessage, isLoading, stopGeneration, streamStats } = useChatStore();
-  const { fetchInventory, fetchEquipment, fetchKeyEvents, character, interruptAction } = useGameStore();
+  const { fetchInventory, fetchEquipment, fetchKeyEvents, fetchHistory, fetchHistoryDates, character, interruptAction } = useGameStore();
   const [isFocused, setIsFocused] = useState(false);
   const [backpackOpen, setBackpackOpen] = useState(false);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [busyRemaining, setBusyRemaining] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -112,6 +115,12 @@ export function ChatInput() {
     if (command === '__events__') {
       await fetchKeyEvents();
       setEventOpen(true);
+      return;
+    }
+    if (command === '__history__') {
+      await fetchHistoryDates();
+      await fetchHistory();
+      setHistoryOpen(true);
       return;
     }
     setInputValue(command);
@@ -220,6 +229,7 @@ export function ChatInput() {
       <BackpackDialog open={backpackOpen} onClose={() => setBackpackOpen(false)} />
       <EquipmentDialog open={equipmentOpen} onClose={() => setEquipmentOpen(false)} />
       <EventDialog open={eventOpen} onClose={() => setEventOpen(false)} />
+      <HistoryDialog open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
   );
 }

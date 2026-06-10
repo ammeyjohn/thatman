@@ -142,6 +142,26 @@ export interface KeyEvent {
   updatedAt: string;
 }
 
+export interface HistoryEntry {
+  period: string;
+  summary: string;
+  location: string;
+  realmSnapshot: string;
+  keyChanges: string[];
+  sourceMessageId?: string;
+  timestamp: number;
+}
+
+export interface CharacterHistory {
+  id: string;
+  uid: string;
+  gameDate: string;
+  entries: HistoryEntry[];
+  dailySummary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Entity {
   name: string;
   type: 'character' | 'place' | 'weapon' | 'technique' | 'item';

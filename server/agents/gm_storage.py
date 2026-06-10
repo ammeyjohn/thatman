@@ -215,6 +215,7 @@ class GMStorage:
         self._db_weather: str = f"{self._couch_db_prefix}weather"
         self._db_action_definitions: str = f"{self._couch_db_prefix}action_definitions"
         self._db_key_events: str = f"{self._couch_db_prefix}key_events"
+        self._db_history: str = f"{self._couch_db_prefix}history"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -277,6 +278,7 @@ class GMStorage:
             self._db_weather,
             self._db_action_definitions,
             self._db_key_events,
+            self._db_history,
         ]
         for db_name in db_names:
             try:
@@ -2076,6 +2078,188 @@ class GMStorage:
         except Exception as e:
             error_log(f"删除关键事件异常: uid={uid}, event_id={event_id}, 错误: {e}")
             return False
+
+    # ================================================================
+    # 角色历史进程操作
+    # ================================================================
+
+    def couch_save_history_entry(self, uid: str, game_date: str, entry_data: dict, daily_summary: str = "") -> dict:
+        """
+        保存/追加角色历史进程 entry
+
+        以 uid + game_date 为维度聚合。如果该天的文档已存在，追加 entry；
+        否则创建新文档。
+
+        Args:
+            uid: 玩家唯一标识
+            game_date: 游戏日期，如"天元三千六百年·正月初一"
+            entry_data: 历史 entry 数据，包含 period, summary, location, realm_snapshot, key_changes, source_message_id, timestamp
+            daily_summary: 日总结（可选，由 HistoryExtractor 生成）
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            from datetime import datetime, timezone
+            from history_extractor import HistoryExtractor
+
+            now = datetime.now(timezone.utc).isoformat()
+            doc_id = HistoryExtractor.generate_doc_id(uid, game_date)
+
+            # 查找已有文档
+            existing = None
+            resp = self._couch_request("GET", f"/{self._db_history}/{doc_id}")
+            if resp.status_code == 200:
+                existing = resp.json()
+            elif resp.status_code != 404:
+                warn_log(f"查询历史文档失败: uid={uid}, game_date={game_date}, 状态码={resp.status_code}")
+
+            if existing and "_id" in existing:
+                # 追加 entry
+                entries = existing.get("entries", [])
+                entries.append(entry_data)
+                existing["entries"] = entries
+                existing["updated_at"] = now
+                if daily_summary:
+                    existing["daily_summary"] = daily_summary
+                # 保留 _rev
+                doc = existing
+            else:
+                # 创建新文档
+                doc = {
+                    "_id": doc_id,
+                    "uid": uid,
+                    "game_date": game_date,
+                    "entries": [entry_data],
+                    "daily_summary": daily_summary,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+
+            resp = self._couch_request("PUT", f"/{self._db_history}/{doc_id}", json_data=doc)
+            if resp.status_code in (201, 202):
+                info_log(f"保存历史 entry 成功: uid={uid}, game_date={game_date}")
+                return resp.json()
+            else:
+                warn_log(f"保存历史 entry 失败: uid={uid}, game_date={game_date}, 状态码={resp.status_code}, 响应={resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存历史 entry 异常: uid={uid}, game_date={game_date}, 错误={e}")
+            return {}
+
+    def couch_update_history_daily_summary(self, uid: str, game_date: str, daily_summary: str) -> dict:
+        """
+        更新历史文档的日总结
+
+        Args:
+            uid: 玩家唯一标识
+            game_date: 游戏日期
+            daily_summary: 日总结文本
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            from datetime import datetime, timezone
+            from history_extractor import HistoryExtractor
+
+            doc_id = HistoryExtractor.generate_doc_id(uid, game_date)
+            resp = self._couch_request("GET", f"/{self._db_history}/{doc_id}")
+            if resp.status_code != 200:
+                warn_log(f"更新日总结失败：文档不存在: uid={uid}, game_date={game_date}")
+                return {}
+
+            doc = resp.json()
+            doc["daily_summary"] = daily_summary
+            doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            resp = self._couch_request("PUT", f"/{self._db_history}/{doc_id}", json_data=doc)
+            if resp.status_code in (201, 202):
+                info_log(f"更新日总结成功: uid={uid}, game_date={game_date}")
+                return resp.json()
+            else:
+                warn_log(f"更新日总结失败: uid={uid}, game_date={game_date}, 状态码={resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"更新日总结异常: uid={uid}, game_date={game_date}, 错误={e}")
+            return {}
+
+    def couch_get_history(self, uid: str, game_date: str = "") -> list:
+        """
+        获取角色历史记录
+
+        Args:
+            uid: 玩家唯一标识
+            game_date: 游戏日期过滤，为空则返回所有
+
+        Returns:
+            历史记录列表，按 game_date 降序排列（最新在前），失败返回空列表
+        """
+        try:
+            selector: Dict[str, Any] = {"uid": uid}
+            if game_date:
+                selector["game_date"] = game_date
+
+            body = {
+                "selector": selector,
+                "limit": 1000,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_history}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                # 按 created_at 降序排列（最新在前）
+                docs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                info_log(f"获取历史记录成功: uid={uid}, game_date={game_date}, 数量={len(docs)}")
+                return docs
+            else:
+                warn_log(f"获取历史记录失败: uid={uid}, 状态码={resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"获取历史记录异常: uid={uid}, 错误={e}")
+            return []
+
+    def couch_get_history_dates(self, uid: str) -> list:
+        """
+        获取角色所有有历史记录的游戏日期
+
+        Args:
+            uid: 玩家唯一标识
+
+        Returns:
+            游戏日期列表，按时间降序排列（最新在前），失败返回空列表
+        """
+        try:
+            body = {
+                "selector": {"uid": uid},
+                "fields": ["game_date", "created_at"],
+                "limit": 1000,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_history}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                # 按 created_at 降序排列
+                docs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                dates = [doc.get("game_date", "") for doc in docs if doc.get("game_date")]
+                info_log(f"获取历史日期成功: uid={uid}, 数量={len(dates)}")
+                return dates
+            else:
+                warn_log(f"获取历史日期失败: uid={uid}, 状态码={resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"获取历史日期异常: uid={uid}, 错误={e}")
+            return []
 
     # ================================================================
     # 生命周期管理
