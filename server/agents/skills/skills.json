@@ -546,6 +546,55 @@
           }
         }
       ]
+    },
+    {
+      "name": "character_status",
+      "description": "角色核心属性状态更新技能，带验证限制。所有核心属性（境界、等级、生命值、法力值、神识值、装备、背包）的修改必须通过此技能完成，技能内部会对新旧状态进行比对验证，拒绝不合理的状态更新",
+      "module": "skills.character_status_skill",
+      "category": "character",
+      "functions": {
+        "update_character_status": {
+          "description": "更新角色核心属性状态（带验证限制）。核心属性包括：realm(境界)、realm_stage(境界阶段)、level(等级)、health/max_health(生命值)、mana/max_mana(法力值)、spirit/max_spirit(神识值)、equipment(装备)、inventory(背包)。验证规则：境界只能升一级、阶段只能升一级、等级单次增幅不超过10、属性上限变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "updates": {"type": "object", "description": "待更新的状态字段字典，仅包含需要更新的核心属性字段", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, uid, updated_fields/rejected_fields, reasons 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "update_character_status",
+            "description": "更新角色核心属性状态（带验证限制）。当需要修改角色的境界、境界阶段、等级、生命值、法力值、神识值、装备、背包等核心属性时，必须使用此工具。工具会验证状态变更的合理性，拒绝不合理的更新（如境界跳跃、等级暴增等）。验证规则：境界只能升一级、境界阶段只能升一级（突破时重置为初期）、等级单次增幅不超过10、当前属性值不能超过上限、属性上限普通变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "updates": {
+                  "type": "object",
+                  "description": "待更新的核心属性字段字典，仅包含需要更新的字段。支持的字段：realm(境界名称，如'炼气期')、realm_stage(境界阶段，'初期'/'中期'/'后期'/'巅峰'/'圆满')、level(等级，数字)、health(当前生命值)、max_health(最大生命值)、mana(当前法力值)、max_mana(最大法力值)、spirit(当前神识值)、max_spirit(最大神识值)、equipment(装备列表)、inventory(背包物品列表)",
+                  "properties": {
+                    "realm": {"type": "string", "description": "境界名称，如'引气入体'、'炼气期'、'筑基期'等"},
+                    "realm_stage": {"type": "string", "description": "境界阶段：初期/中期/后期/巅峰/圆满"},
+                    "level": {"type": "integer", "description": "等级"},
+                    "health": {"type": "integer", "description": "当前生命值"},
+                    "max_health": {"type": "integer", "description": "最大生命值"},
+                    "mana": {"type": "integer", "description": "当前法力值"},
+                    "max_mana": {"type": "integer", "description": "最大法力值"},
+                    "spirit": {"type": "integer", "description": "当前神识值"},
+                    "max_spirit": {"type": "integer", "description": "最大神识值"},
+                    "equipment": {"type": "array", "description": "装备列表", "items": {"type": "object"}},
+                    "inventory": {"type": "array", "description": "背包物品列表", "items": {"type": "object"}}
+                  }
+                }
+              },
+              "required": ["uid", "updates"]
+            }
+          }
+        }
+      ]
     }
   ]
 }

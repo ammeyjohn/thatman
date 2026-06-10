@@ -15,6 +15,7 @@ from gm_logger import debug_log, info_log, warn_log, error_log
 # 导入 read_doc 和 find_skill 模块
 from skills.read_doc import read_doc as _read_doc, list_available_docs as _list_available_docs, search_doc_content as _search_doc_content
 from skills.find_skill import list_all_skills as _list_all_skills, search_skill as _search_skill, get_skill_info as _get_skill_info
+from skills.character_status_skill import update_character_status as _update_character_status
 from action_definition_manager import get_action_definition_manager
 
 # 配置日志
@@ -231,6 +232,17 @@ def match_and_execute_tool(tool_name: str, tool_args: Dict[str, Any], storage) -
                 return json.dumps({"error": "动作定义管理器未初始化"}, ensure_ascii=False)
             result = action_mgr.list_action_definitions(category)
             return json.dumps({"success": True, "total": len(result), "definitions": result}, ensure_ascii=False)
+
+        # ---- 角色状态更新操作 ----
+        if tool_name == "update_character_status":
+            uid = tool_args.get("uid", "")
+            updates = tool_args.get("updates", {})
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            if not updates:
+                return json.dumps({"success": False, "error": "updates 不能为空"}, ensure_ascii=False)
+            result = _update_character_status(uid=uid, updates=updates, storage=storage)
+            return json.dumps(result, ensure_ascii=False)
 
         # 未知工具
         warn_log(f"未知工具名称: {tool_name}")

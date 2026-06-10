@@ -10,6 +10,7 @@ Available Skills:
     - couchdb_skill: CouchDB 读写技能（玩家/实体/关系/世界快照）
     - memory_skill: 长效记忆技能（召回/保存记忆）
     - vector_skill: Qdrant 剧情向量技能（检索/入库剧情）
+    - character_status_skill: 角色状态更新技能（带验证限制）
 
 Usage:
     from skills import read_doc, find_skill
@@ -27,6 +28,7 @@ from . import search_episode
 from . import couchdb_skill
 from . import memory_skill
 from . import vector_skill
+from . import character_status_skill
 
 __all__ = [
     "read_doc",
@@ -35,4 +37,5 @@ __all__ = [
     "couchdb_skill",
     "memory_skill",
     "vector_skill",
+    "character_status_skill",
 ]

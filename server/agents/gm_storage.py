@@ -1703,6 +1703,7 @@ class GMStorage:
         """
         player_update 分支：玩家数据更新
 
+        - 对核心属性字段进行兜底验证（防止绕过 update_character_status 工具）
         - couch_save_player
         - 解析 player_update 中的 link_data 并 couch_save_link
         - save_memory 个人记忆
@@ -1717,17 +1718,24 @@ class GMStorage:
         player_update = resp_json.get("player_update", {})
         if player_update:
             debug_log(f"[_dispatch_player_update] 保存玩家数据: uid={uid}, 字段={list(player_update.keys())}")
-            # 先获取现有文档，进行增量合并，避免覆盖其他字段
-            existing = self.couch_get_player(uid)
-            if existing and "_id" in existing:
-                merged = {**existing, **player_update}
-                # 移除 CouchDB 内部字段，避免冲突
-                merged.pop("_id", None)
-                merged.pop("_rev", None)
-                self.couch_save_player(uid, merged)
+
+            # 兜底验证：检查核心属性字段，移除不合法的更新
+            player_update = self._sanitize_player_update(uid, player_update)
+
+            if not player_update:
+                warn_log(f"[_dispatch_player_update] 验证后 player_update 为空，跳过保存: uid={uid}")
             else:
-                self.couch_save_player(uid, player_update)
-            debug_log(f"[_dispatch_player_update] 玩家数据保存完成: uid={uid}")
+                # 先获取现有文档，进行增量合并，避免覆盖其他字段
+                existing = self.couch_get_player(uid)
+                if existing and "_id" in existing:
+                    merged = {**existing, **player_update}
+                    # 移除 CouchDB 内部字段，避免冲突
+                    merged.pop("_id", None)
+                    merged.pop("_rev", None)
+                    self.couch_save_player(uid, merged)
+                else:
+                    self.couch_save_player(uid, player_update)
+                debug_log(f"[_dispatch_player_update] 玩家数据保存完成: uid={uid}")
         else:
             warn_log(f"player_update 分支缺少 player_update 数据: uid={uid}")
 
@@ -1759,6 +1767,58 @@ class GMStorage:
                 content=dialog,
                 meta={"type": "player_event", "area": current_area},
             )
+
+    def _sanitize_player_update(self, uid: str, player_update: dict) -> dict:
+        """
+        对 player_update 中的核心属性字段进行兜底验证
+
+        检查是否包含核心属性字段（realm、realm_stage、level、health/max_health、
+        mana/max_mana、spirit/max_spirit、equipment、inventory），如果包含则
+        使用 CharacterStatusValidator 进行验证，移除不合法的字段。
+
+        Args:
+            uid: 玩家唯一标识
+            player_update: 待更新的玩家数据
+
+        Returns:
+            清洗后的 player_update（移除了不合法的核心属性字段）
+        """
+        from character_status_validator import CharacterStatusValidator, CORE_STATUS_FIELDS
+
+        # 检查是否包含核心属性字段
+        core_fields_in_update = set(player_update.keys()) & CORE_STATUS_FIELDS
+        if not core_fields_in_update:
+            # 无核心属性字段，无需验证
+            return player_update
+
+        warn_log(
+            f"[_sanitize_player_update] player_update 中包含核心属性字段 "
+            f"（应通过 update_character_status 工具更新）: {core_fields_in_update}"
+        )
+
+        # 获取当前玩家数据用于验证
+        old_status = self.couch_get_player(uid)
+        if not old_status:
+            warn_log(f"[_sanitize_player_update] 玩家数据不存在，跳过验证: {uid}")
+            return player_update
+
+        # 提取核心属性字段进行验证
+        core_updates = {k: v for k, v in player_update.items() if k in CORE_STATUS_FIELDS}
+        non_core_updates = {k: v for k, v in player_update.items() if k not in CORE_STATUS_FIELDS}
+
+        # 使用验证器清洗核心属性
+        sanitized_core = CharacterStatusValidator.sanitize_updates(old_status, core_updates)
+
+        # 合并清洗后的核心属性和非核心属性
+        result = {**non_core_updates, **sanitized_core}
+
+        removed_fields = core_fields_in_update - set(sanitized_core.keys())
+        if removed_fields:
+            warn_log(
+                f"[_sanitize_player_update] 移除不合法的核心属性字段: {removed_fields}"
+            )
+
+        return result
 
     def _dispatch_new_entity(
         self,
