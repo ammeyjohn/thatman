@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo } from '../types';
+import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo, KeyEvent } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -63,6 +63,9 @@ interface GameState {
   _busyStateCheckInterval: number | null;
   _startBusyStateCheck: () => void;
   _stopBusyStateCheck: () => void;
+  keyEvents: KeyEvent[];
+  fetchKeyEvents: () => Promise<void>;
+  deleteKeyEvent: (eventId: string) => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -135,6 +138,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   isGeneratingWorldLayout: false,
   _layoutGenerationQueue: { character: false, world: false },
   eventsSSE: null,
+  keyEvents: [],
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -812,6 +816,65 @@ export const useGameStore = create<GameState>((set, get) => ({
       clearInterval(_busyStateCheckInterval);
       set({ _busyStateCheckInterval: null });
       console.log('[BusyState] 冷却检查已停止');
+    }
+  },
+
+  fetchKeyEvents: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/key-events?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取关键事件失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.events)) {
+        const keyEvents: KeyEvent[] = data.events.map((e: Record<string, unknown>) => ({
+          id: (e._id as string) || (e.id as string) || '',
+          uid: (e.uid as string) || '',
+          title: (e.title as string) || '',
+          description: (e.description as string) || '',
+          status: (e.status as 'ongoing' | 'completed') || 'ongoing',
+          sourceMessageId: (e.source_message_id as string) || undefined,
+          createdAt: (e.created_at as string) || '',
+          updatedAt: (e.updated_at as string) || '',
+        }));
+        set({ keyEvents });
+        console.log('[KeyEvents] 关键事件加载成功:', keyEvents.length);
+      }
+    } catch (error) {
+      console.error('获取关键事件失败:', error);
+    }
+  },
+
+  deleteKeyEvent: async (eventId: string) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(
+        `${config.API_BASE_URL}/gm/key-events/${encodeURIComponent(eventId)}?uid=${encodeURIComponent(uid)}`,
+        {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+        }
+      );
+      if (!response.ok) {
+        console.error('删除关键事件失败:', response.status);
+        return;
+      }
+
+      set((state) => ({
+        keyEvents: state.keyEvents.filter((e) => e.id !== eventId),
+      }));
+      console.log('[KeyEvents] 关键事件已删除:', eventId);
+    } catch (error) {
+      console.error('删除关键事件失败:', error);
     }
   },
 }));

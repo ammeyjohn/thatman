@@ -131,6 +131,17 @@ export interface WorldEvent {
   type: 'normal' | 'important' | 'urgent';
 }
 
+export interface KeyEvent {
+  id: string;
+  uid: string;
+  title: string;
+  description: string;
+  status: 'ongoing' | 'completed';
+  sourceMessageId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Entity {
   name: string;
   type: 'character' | 'place' | 'weapon' | 'technique' | 'item';

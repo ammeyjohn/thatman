@@ -18,6 +18,7 @@ from weather_service import WeatherService, set_weather_service
 from player_busy_manager import PlayerBusyManager, set_player_busy_manager, get_player_busy_manager
 from action_definition_manager import ActionDefinitionManager, set_action_definition_manager, get_action_definition_manager
 from routes.auth import _verify_token
+import threading
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -171,6 +172,41 @@ def _get_game_time_and_location(current_area: str) -> dict:
         "weather_desc": weather_desc,
         "spirit_tide": spirit_tide,
     }
+
+
+def _async_extract_and_save_events(uid: str, dialog_text: str, user_input: str, source_message_id: str = ""):
+    """
+    异步提取关键事件并保存到数据库
+
+    在后台线程中执行，不阻塞主响应。
+
+    Args:
+        uid: 玩家唯一标识
+        dialog_text: NPC 回复文本
+        user_input: 玩家输入文本
+        source_message_id: 来源消息 ID
+    """
+    try:
+        gm = get_gm()
+        if not gm or not gm.storage:
+            return
+
+        from event_extractor import get_event_extractor
+        extractor = get_event_extractor(gm.config)
+        events = extractor.extract_events(dialog_text, user_input)
+
+        if events:
+            for event in events:
+                event_data = {
+                    "title": event["title"],
+                    "description": event["description"],
+                    "status": event["status"],
+                    "source_message_id": source_message_id,
+                }
+                gm.storage.couch_save_key_event(uid, event_data)
+            info_log(f"异步事件提取完成: uid={uid}, 提取 {len(events)} 个事件")
+    except Exception as e:
+        error_log(f"异步事件提取失败: uid={uid}, 错误: {e}")
 
 
 @gm_bp.route('/gm/chat', methods=['POST'])
@@ -340,6 +376,16 @@ def gm_chat():
                 if npc_message_id:
                     yield f"event: saved\ndata: {json.dumps({'npc_message_id': npc_message_id}, ensure_ascii=False)}\n\n"
 
+                # 异步提取关键事件
+                if dialog_text or result_data.get('dialog', ''):
+                    event_dialog = result_data.get('dialog', dialog_text)
+                    t = threading.Thread(
+                        target=_async_extract_and_save_events,
+                        args=(uid, event_dialog, user_input, npc_message_id or ""),
+                        daemon=True,
+                    )
+                    t.start()
+
             return Response(generate_stream(), mimetype='text/event-stream',
                           headers={
                               'Cache-Control': 'no-cache',
@@ -392,6 +438,15 @@ def gm_chat():
                 response_data['npc_message_id'] = save_resp['id']
         except Exception as e:
             error_log(f"保存NPC聊天消息失败: {e}")
+
+        # 异步提取关键事件
+        if response_data.get('dialog', ''):
+            t = threading.Thread(
+                target=_async_extract_and_save_events,
+                args=(uid, response_data['dialog'], user_input, response_data.get('npc_message_id', '')),
+                daemon=True,
+            )
+            t.start()
 
         debug_log(f"返回响应: {json.dumps(response_data, ensure_ascii=False)}")
         return jsonify(response_data)
@@ -1717,6 +1772,122 @@ def interrupt_action():
         })
     except Exception as e:
         error_log(f"中断耗时行为失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/key-events', methods=['GET'])
+def get_key_events():
+    """
+    获取用户关键事件列表
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+        status: 事件状态过滤，ongoing 或 completed（可选）
+    """
+    uid = request.args.get('uid', '')
+    status = request.args.get('status', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        docs = storage.couch_get_key_events(uid, status=status)
+        # 移除 CouchDB 内部字段
+        events = []
+        for doc in docs:
+            doc.pop('_rev', None)
+            doc.pop('_id', None)
+            events.append(doc)
+        return jsonify({
+            'uid': uid,
+            'events': events,
+            'total': len(events),
+        })
+    except Exception as e:
+        error_log(f"获取关键事件失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/key-events/<event_id>', methods=['DELETE'])
+def delete_key_event(event_id: str):
+    """
+    删除关键事件
+
+    路径参数:
+        event_id: 事件文档ID（必填）
+    查询参数:
+        uid: 玩家唯一ID（必填）
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if not event_id:
+        return jsonify({
+            'error': {
+                'message': 'event_id 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        result = storage.couch_delete_key_event(uid, event_id)
+        if result is True:
+            return jsonify({'success': True, 'message': '关键事件已删除'})
+        elif result == "not_found":
+            return jsonify({
+                'error': {
+                    'message': '关键事件不存在',
+                    'type': 'not_found_error',
+                    'code': 'not_found'
+                }
+            }), 404
+        elif result == "forbidden":
+            return jsonify({
+                'error': {
+                    'message': '无权删除该关键事件',
+                    'type': 'forbidden_error',
+                    'code': 'forbidden'
+                }
+            }), 403
+        else:
+            return jsonify({
+                'error': {
+                    'message': '删除关键事件失败',
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+    except Exception as e:
+        error_log(f"删除关键事件失败: {e}")
         return jsonify({
             'error': {
                 'message': f'服务器内部错误: {str(e)}',

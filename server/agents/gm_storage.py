@@ -214,6 +214,7 @@ class GMStorage:
         self._db_world_time: str = f"{self._couch_db_prefix}world_time"
         self._db_weather: str = f"{self._couch_db_prefix}weather"
         self._db_action_definitions: str = f"{self._couch_db_prefix}action_definitions"
+        self._db_key_events: str = f"{self._couch_db_prefix}key_events"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -275,6 +276,7 @@ class GMStorage:
             self._db_world_time,
             self._db_weather,
             self._db_action_definitions,
+            self._db_key_events,
         ]
         for db_name in db_names:
             try:
@@ -1943,6 +1945,137 @@ class GMStorage:
                         meta["area"] = current_area
                     self.insert_plot_vector(content=content, meta=meta)
             debug_log(f"[_dispatch_world_snap] 批量剧情入库完成")
+
+    # ================================================================
+    # 关键事件操作
+    # ================================================================
+
+    def couch_save_key_event(self, uid: str, event_data: dict) -> dict:
+        """
+        保存关键事件
+
+        Args:
+            uid: 玩家唯一标识
+            event_data: 事件数据，包含 title, description, status 等
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+
+            event_id = event_data.get("_id") or f"event_{uuid.uuid4().hex[:12]}"
+            event_data["_id"] = event_id
+            event_data["uid"] = uid
+            if "created_at" not in event_data:
+                event_data["created_at"] = now
+            event_data["updated_at"] = now
+
+            # 检查是否已存在（更新场景）
+            existing_resp = self._couch_request("GET", f"/{self._db_key_events}/{event_id}")
+            if existing_resp.status_code == 200:
+                existing = existing_resp.json()
+                if "_rev" in existing:
+                    event_data["_rev"] = existing["_rev"]
+                # 保留原始 created_at
+                if "created_at" in existing and "created_at" not in event_data:
+                    event_data["created_at"] = existing["created_at"]
+
+            resp = self._couch_request("PUT", f"/{self._db_key_events}/{event_id}", json_data=event_data)
+            if resp.status_code in (201, 202):
+                info_log(f"保存关键事件成功: uid={uid}, event_id={event_id}")
+                return resp.json()
+            else:
+                warn_log(f"保存关键事件失败: uid={uid}, event_id={event_id}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                return {}
+        except Exception as e:
+            error_log(f"保存关键事件异常: uid={uid}, 错误: {e}")
+            return {}
+
+    def couch_get_key_events(self, uid: str, status: str = "") -> list:
+        """
+        获取用户的关键事件列表
+
+        Args:
+            uid: 玩家唯一标识
+            status: 事件状态过滤，"ongoing" 或 "completed"，为空则返回所有
+
+        Returns:
+            事件列表，按 created_at 降序排列（最新在前），失败返回空列表
+        """
+        try:
+            selector: Dict[str, Any] = {"uid": uid}
+            if status:
+                selector["status"] = status
+
+            body = {
+                "selector": selector,
+                "limit": 1000,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_key_events}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                # 按 created_at 降序排列（最新在前）
+                docs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                info_log(f"获取关键事件成功: uid={uid}, status={status}, 数量={len(docs)}")
+                return docs
+            else:
+                warn_log(f"获取关键事件失败: uid={uid}, 状态码: {resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"获取关键事件异常: uid={uid}, 错误: {e}")
+            return []
+
+    def couch_delete_key_event(self, uid: str, event_id: str):
+        """
+        删除关键事件
+
+        Args:
+            uid: 玩家唯一标识
+            event_id: 事件文档 ID
+
+        Returns:
+            True 表示删除成功
+            "not_found" 表示事件不存在
+            "forbidden" 表示事件不属于该用户
+            False 表示其他失败
+        """
+        try:
+            # 先查询该事件，确认存在且属于该用户
+            resp = self._couch_request("GET", f"/{self._db_key_events}/{event_id}")
+            if resp.status_code == 404:
+                warn_log(f"查询关键事件失败: uid={uid}, event_id={event_id}, 状态码: 404")
+                return "not_found"
+            if resp.status_code != 200:
+                warn_log(f"查询关键事件失败: uid={uid}, event_id={event_id}, 状态码: {resp.status_code}")
+                return False
+
+            doc = resp.json()
+            if doc.get("uid") != uid:
+                warn_log(f"关键事件不属于该用户: uid={uid}, event_id={event_id}")
+                return "forbidden"
+
+            rev = doc.get("_rev")
+            del_resp = self._couch_request(
+                "DELETE",
+                f"/{self._db_key_events}/{event_id}?rev={rev}",
+            )
+            if del_resp.status_code in (200, 202):
+                info_log(f"删除关键事件成功: uid={uid}, event_id={event_id}")
+                return True
+            else:
+                warn_log(f"删除关键事件失败: uid={uid}, event_id={event_id}, 状态码: {del_resp.status_code}")
+                return False
+        except Exception as e:
+            error_log(f"删除关键事件异常: uid={uid}, event_id={event_id}, 错误: {e}")
+            return False
 
     # ================================================================
     # 生命周期管理

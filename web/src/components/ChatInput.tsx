@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useGameStore } from '../stores/gameStore';
 import { BackpackDialog } from './BackpackDialog';
 import { EquipmentDialog } from './EquipmentDialog';
+import { EventDialog } from './EventDialog';
 
 // 注册光标处插入文本的实现到 chatStore
 function registerInsertTextAtCursor(
@@ -40,14 +41,16 @@ function registerInsertTextAtCursor(
 const quickActions = [
   { label: '装备', icon: '🛡️', command: '__equipment__' },
   { label: '储物袋', icon: '🎒', command: '__backpack__' },
+  { label: '事件', icon: '📜', command: '__events__' },
 ];
 
 export function ChatInput() {
   const { inputValue, setInputValue, sendMessage, isLoading, stopGeneration, streamStats } = useChatStore();
-  const { fetchInventory, fetchEquipment, character, interruptAction } = useGameStore();
+  const { fetchInventory, fetchEquipment, fetchKeyEvents, character, interruptAction } = useGameStore();
   const [isFocused, setIsFocused] = useState(false);
   const [backpackOpen, setBackpackOpen] = useState(false);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
+  const [eventOpen, setEventOpen] = useState(false);
   const [busyRemaining, setBusyRemaining] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -104,6 +107,11 @@ export function ChatInput() {
     if (command === '__equipment__') {
       await fetchEquipment();
       setEquipmentOpen(true);
+      return;
+    }
+    if (command === '__events__') {
+      await fetchKeyEvents();
+      setEventOpen(true);
       return;
     }
     setInputValue(command);
@@ -211,6 +219,7 @@ export function ChatInput() {
 
       <BackpackDialog open={backpackOpen} onClose={() => setBackpackOpen(false)} />
       <EquipmentDialog open={equipmentOpen} onClose={() => setEquipmentOpen(false)} />
+      <EventDialog open={eventOpen} onClose={() => setEventOpen(false)} />
     </div>
   );
 }
