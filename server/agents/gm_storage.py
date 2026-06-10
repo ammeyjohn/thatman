@@ -781,30 +781,38 @@ class GMStorage:
         """
         保存实体数据（新增或更新）
 
-        如果文档已存在，自动携带 _rev 进行更新。
+        按名称+类型判断实体是否已存在，如果存在则携带 _rev 进行更新。
 
         Args:
-            entity_id: 实体唯一标识
+            entity_id: 实体唯一标识（仅在新实体时使用）
             entity_data: 实体数据
 
         Returns:
             CouchDB 写入响应，失败返回空字典
         """
+        name = entity_data.get("name", "")
         try:
-            # 先查询现有文档获取 _rev
-            existing = self.couch_get_entity(entity_id)
-            if existing and "_rev" in existing:
-                entity_data["_rev"] = existing["_rev"]
+            # 按名称+类型查询现有文档
+            entity_type = entity_data.get("entity_type", "")
+            existing_list = self.couch_find_entity_by_name(name, entity_type) if name else []
 
-            resp = self._couch_request("PUT", f"/{self._db_entities}/{entity_id}", json_data=entity_data)
+            if existing_list:
+                existing = existing_list[0]
+                doc_id = existing.get("_id", entity_id)
+                if "_rev" in existing:
+                    entity_data["_rev"] = existing["_rev"]
+            else:
+                doc_id = entity_id
+
+            resp = self._couch_request("PUT", f"/{self._db_entities}/{doc_id}", json_data=entity_data)
             if resp.status_code in (201, 202):
-                info_log(f"保存实体数据成功: {entity_id}")
+                info_log(f"保存实体数据成功: {doc_id}, name={name}")
                 return resp.json()
             else:
-                warn_log(f"保存实体数据失败: {entity_id}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
+                warn_log(f"保存实体数据失败: {doc_id}, name={name}, 状态码: {resp.status_code}, 响应: {resp.text[:200]}")
                 return {}
         except Exception as e:
-            error_log(f"保存实体数据异常: {entity_id}, 错误: {e}")
+            error_log(f"保存实体数据异常: entity_id={entity_id}, name={name}, 错误: {e}")
             return {}
 
     def couch_get_link(self, target_id: str, rel_type: str = "") -> dict:
