@@ -162,6 +162,15 @@ export interface CharacterHistory {
   updatedAt: string;
 }
 
+export interface NearbyCharacter {
+  id: string;
+  name: string;
+  type: 'npc' | 'player' | 'monster';
+  desc: string;
+  currentAction: string;
+  avatar?: string;
+}
+
 export interface Entity {
   name: string;
   type: 'character' | 'place' | 'weapon' | 'technique' | 'item';

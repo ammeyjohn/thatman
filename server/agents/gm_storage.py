@@ -678,6 +678,89 @@ class GMStorage:
             error_log(f"按名称查询实体异常: name={name}, 错误: {e}")
             return []
 
+    def couch_get_nearby_characters(self, uid: str, limit: int = 20) -> list:
+        """
+        从聊天历史和实体数据库中提取附近角色信息
+
+        1. 从最近聊天消息的 entities 字段提取 type='character' 的实体
+        2. 从实体数据库中查询 belong_area 与玩家当前位置匹配的 npc 类型实体
+        3. 合并去重后返回
+
+        Args:
+            uid: 玩家唯一标识
+            limit: 查询聊天历史的条数
+
+        Returns:
+            角色信息列表，每项包含 name, type, desc, currentAction, avatar
+        """
+        characters = []
+        seen_names = set()
+
+        # 获取玩家当前位置
+        player_data = self.couch_get_player(uid)
+        current_location = player_data.get("current_location", "") if player_data else ""
+
+        # 1. 从聊天历史中提取 character 类型实体
+        try:
+            chat_docs = self.get_chat_history(uid, limit=limit)
+            for doc in chat_docs:
+                if not isinstance(doc, dict):
+                    continue
+                entities = doc.get("entities", [])
+                if not isinstance(entities, list):
+                    continue
+                for entity in entities:
+                    if not isinstance(entity, dict):
+                        continue
+                    if entity.get("type") != "character":
+                        continue
+                    name = entity.get("name", "")
+                    if not name or name in seen_names:
+                        continue
+                    seen_names.add(name)
+                    characters.append({
+                        "name": name,
+                        "type": "npc",
+                        "desc": entity.get("desc", ""),
+                        "currentAction": "",
+                    })
+        except Exception as e:
+            error_log(f"从聊天历史提取角色实体失败: {e}")
+
+        # 2. 从实体数据库中查询当前位置的 NPC
+        if current_location:
+            try:
+                body = {
+                    "selector": {
+                        "entity_type": "npc",
+                        "belong_area": current_location,
+                    },
+                    "limit": 20,
+                }
+                resp = self._couch_request(
+                    "POST",
+                    f"/{self._db_entities}/_find",
+                    json_data=body,
+                )
+                if resp.status_code == 200:
+                    docs = resp.json().get("docs", [])
+                    for doc in docs:
+                        name = doc.get("name", "")
+                        if not name or name in seen_names:
+                            continue
+                        seen_names.add(name)
+                        characters.append({
+                            "name": name,
+                            "type": "npc",
+                            "desc": doc.get("base_info", ""),
+                            "currentAction": "",
+                        })
+            except Exception as e:
+                error_log(f"从实体数据库查询附近NPC失败: {e}")
+
+        debug_log(f"获取附近角色: uid={uid}, location={current_location}, 数量={len(characters)}")
+        return characters
+
     def save_entities_from_chat(self, uid: str, current_area: str, entities: list) -> int:
         """
         将聊天中出现的实体自动保存到数据库

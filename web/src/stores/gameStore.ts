@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, BusyState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory } from '../types';
+import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -70,6 +70,9 @@ interface GameState {
   historyDates: string[];
   fetchHistory: (gameDate?: string) => Promise<void>;
   fetchHistoryDates: () => Promise<void>;
+  nearbyCharacters: NearbyCharacter[];
+  _lastFetchNearbyTime: number;
+  fetchNearbyCharacters: () => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -145,6 +148,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   keyEvents: [],
   historyList: [],
   historyDates: [],
+  nearbyCharacters: [],
+  _lastFetchNearbyTime: 0,
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -547,6 +552,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       // 加载忙碌状态
       useGameStore.getState().fetchBusyState();
+
+      // 加载附近人物
+      useGameStore.getState().fetchNearbyCharacters();
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
@@ -951,6 +959,44 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (error) {
       console.error('获取历史日期失败:', error);
+    }
+  },
+
+  fetchNearbyCharacters: async () => {
+    // 防抖：30秒内不重复调用
+    const now = Date.now();
+    const lastFetchTime = useGameStore.getState()._lastFetchNearbyTime;
+    if (now - lastFetchTime < 30000) {
+      return;
+    }
+
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/nearby-characters?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) {
+        console.error('获取附近人物失败:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (Array.isArray(data.characters)) {
+        const characters: NearbyCharacter[] = data.characters.map((c: Record<string, unknown>) => ({
+          id: (c.id as string) || `char_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          name: (c.name as string) || '',
+          type: (c.type as 'npc' | 'player' | 'monster') || 'npc',
+          desc: (c.desc as string) || '',
+          currentAction: (c.current_action as string) || (c.currentAction as string) || '',
+          avatar: (c.avatar as string) || undefined,
+        }));
+        set({ nearbyCharacters: characters, _lastFetchNearbyTime: Date.now() });
+        console.log('[NearbyCharacters] 附近人物加载成功:', characters.length);
+      }
+    } catch (error) {
+      console.error('获取附近人物失败:', error);
     }
   },
 }));

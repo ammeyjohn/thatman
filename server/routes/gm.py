@@ -2138,3 +2138,136 @@ def get_history_dates():
                 'code': 'internal_error'
             }
         }), 500
+
+
+@gm_bp.route('/gm/nearby-characters', methods=['GET'])
+def get_nearby_characters():
+    """
+    获取玩家附近的人物列表
+
+    从聊天历史和实体数据库中提取角色信息，
+    并调用 LLM 补充当前场景中可能存在的其他角色。
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    响应格式:
+    {
+        "characters": [
+            {
+                "id": "char_xxx",
+                "name": "云溪村长",
+                "type": "npc",
+                "desc": "云溪村的村长，年迈但精神矍铄",
+                "current_action": "在村口大树下歇息",
+                "avatar": "👴"
+            }
+        ]
+    }
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+
+        # 1. 从聊天历史和实体数据库提取已知角色
+        known_characters = storage.couch_get_nearby_characters(uid, limit=20)
+
+        # 2. 获取场景信息，用于 LLM 补充
+        player_data = storage.couch_get_player(uid)
+        current_location = player_data.get("current_location", "") if player_data else ""
+        current_status = player_data.get("current_status", "") if player_data else ""
+
+        # 3. 调用 LLM 补充当前场景中可能存在的其他角色
+        supplemented_characters = list(known_characters)
+        seen_names = {c["name"] for c in known_characters}
+
+        if current_location:
+            try:
+                gm = get_gm()
+                llm = gm._create_chat_llm()
+
+                # 构建已有角色摘要
+                existing_names = "、".join(seen_names) if seen_names else "无"
+
+                prompt = f"""你是一个修仙世界的场景描述师。请根据当前场景信息，列出玩家周围可能存在的角色（NPC、怪物等）。
+
+当前场景：{current_location}
+玩家状态：{current_status or '未知'}
+已发现的角色：{existing_names}
+
+请补充3-5个当前场景中合理存在的角色。每个角色包含：
+- name: 角色名称
+- type: 类型（npc/monster）
+- desc: 简短介绍（20字以内）
+- current_action: 正在做的事（15字以内）
+- avatar: 代表性emoji
+
+请严格以JSON数组格式返回，不要包含任何其他文字。示例：
+[{{"name":"灵兽白鹿","type":"monster","desc":"通体雪白的灵兽","current_action":"在溪边饮水","avatar":"🦌"}}]"""
+
+                response = llm.chat.completions.create(
+                    model=llm._gm_model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=512,
+                )
+
+                content = response.choices[0].message.content.strip()
+                # 提取 JSON 数组
+                import re
+                json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                if json_match:
+                    llm_characters = json.loads(json_match.group())
+                    for char in llm_characters:
+                        if not isinstance(char, dict):
+                            continue
+                        name = char.get("name", "")
+                        if not name or name in seen_names:
+                            continue
+                        seen_names.add(name)
+                        supplemented_characters.append({
+                            "name": name,
+                            "type": char.get("type", "npc"),
+                            "desc": char.get("desc", ""),
+                            "currentAction": char.get("current_action", ""),
+                            "avatar": char.get("avatar", ""),
+                        })
+                    info_log(f"LLM 补充附近角色: uid={uid}, 补充 {len(supplemented_characters) - len(known_characters)} 个")
+            except Exception as e:
+                error_log(f"LLM 补充附近角色失败: {e}")
+
+        # 4. 为每个角色生成 id 并格式化输出
+        characters = []
+        for idx, char in enumerate(supplemented_characters):
+            characters.append({
+                "id": f"char_{idx}_{hash(char['name']) % 10000:04d}",
+                "name": char.get("name", ""),
+                "type": char.get("type", "npc"),
+                "desc": char.get("desc", ""),
+                "current_action": char.get("currentAction", ""),
+                "avatar": char.get("avatar", ""),
+            })
+
+        return jsonify({
+            'uid': uid,
+            'characters': characters,
+        })
+    except Exception as e:
+        error_log(f"获取附近人物失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
