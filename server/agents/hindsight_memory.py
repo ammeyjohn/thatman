@@ -87,7 +87,7 @@ class HindsightMemoryStore:
         auto_retain: bool = False,
         mission: Optional[str] = None,
         disposition: Optional[Dict[str, int]] = None,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ):
         """
         初始化记忆库

@@ -30,13 +30,16 @@ interface ChatState {
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
   earliestTimestamp: number | null;
+  displayedEventIds: Set<string>;
   addMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => string;
+  addEventMessage: (eventId: string, title: string, description: string) => void;
   updateLastMessage: (content: string) => void;
   updateLastMessageOptions: (options: string[]) => void;
   updateLastMessageActions: (actions: string[]) => void;
   updateLastMessageParsedJSON: (parsedJSON: Record<string, unknown>) => void;
   updateLastMessageRawJSON: (rawJSON: string) => void;
   updateLastMessageEntities: (entities: Entity[]) => void;
+  updateLastMessageSenderInfo: (senderName?: string, senderAvatar?: string) => void;
   setInputValue: (value: string) => void;
   insertTextAtCursor: (text: string) => void;
   setStreamingContent: (content: string) => void;
@@ -323,6 +326,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   hasMoreHistory: true,
   isLoadingHistory: false,
   earliestTimestamp: null,
+  displayedEventIds: new Set(),
 
   addMessage: (message) => {
     const id = generateId();
@@ -345,6 +349,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ],
     }));
     return id;
+  },
+
+  addEventMessage: (eventId, title, description) => {
+    const { displayedEventIds, addMessage } = get();
+    if (displayedEventIds.has(eventId)) {
+      return;
+    }
+
+    const content = description ? `**${title}**\n\n${description}` : `**${title}**`;
+    addMessage({
+      sender: 'system',
+      content,
+      type: 'event',
+    });
+
+    set((state) => ({
+      displayedEventIds: new Set([...state.displayedEventIds, eventId]),
+    }));
   },
 
   updateLastMessage: (content) =>
@@ -403,6 +425,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const lastMessage = messages[messages.length - 1];
       if (lastMessage && lastMessage.sender === 'npc') {
         lastMessage.entities = entities;
+      }
+      return { messages };
+    }),
+
+  updateLastMessageSenderInfo: (senderName, senderAvatar) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.sender === 'npc') {
+        if (senderName !== undefined) lastMessage.senderName = senderName;
+        if (senderAvatar !== undefined) lastMessage.senderAvatar = senderAvatar;
       }
       return { messages };
     }),
@@ -467,7 +500,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   regenerateMessage: async (messageId: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, resetStreamStats, deleteMessage } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, updateLastMessageSenderInfo, resetStreamStats, deleteMessage } = get();
 
     // 找到要重新生成的消息
     const messageIndex = messages.findIndex((m) => m.id === messageId);
@@ -496,8 +529,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 添加新的空AI消息
     addMessage({
       sender: 'npc',
-      senderName: '云溪村长',
-      senderAvatar: '👴',
       content: '',
       type: 'normal',
     });
@@ -600,6 +631,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }));
           if (entities.length > 0) {
             updateLastMessageEntities(entities);
+          }
+
+          // 提取 npc_name 和 npc_avatar，更新发送者信息
+          const npcName = (result as Record<string, unknown>).npc_name;
+          const npcAvatar = (result as Record<string, unknown>).npc_avatar;
+          if (typeof npcName === 'string' && npcName) {
+            updateLastMessageSenderInfo(npcName, typeof npcAvatar === 'string' ? npcAvatar : undefined);
           }
 
           updateLastMessageParsedJSON(result as unknown as Record<string, unknown>);
@@ -789,7 +827,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string) => {
-    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, resetStreamStats } = get();
+    const { messages, addMessage, updateLastMessage, updateLastMessageActions, updateLastMessageParsedJSON, updateLastMessageRawJSON, updateLastMessageEntities, updateLastMessageSenderInfo, resetStreamStats } = get();
 
     // 添加用户消息，并记录其 id
     const userMessageId = addMessage({
@@ -808,8 +846,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 先添加一个空的AI消息，用于更新
     addMessage({
       sender: 'npc',
-      senderName: '云溪村长',
-      senderAvatar: '👴',
       content: '',
       type: 'normal',
     });
@@ -908,6 +944,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }));
           if (entities.length > 0) {
             updateLastMessageEntities(entities);
+          }
+
+          // 提取 npc_name 和 npc_avatar，更新发送者信息
+          const npcName = (result as Record<string, unknown>).npc_name;
+          const npcAvatar = (result as Record<string, unknown>).npc_avatar;
+          if (typeof npcName === 'string' && npcName) {
+            updateLastMessageSenderInfo(npcName, typeof npcAvatar === 'string' ? npcAvatar : undefined);
           }
 
           // 保存解析后的 JSON

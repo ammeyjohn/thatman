@@ -13,7 +13,7 @@
 无论玩家输入何种内容，你的回复**必须且只能**是以下标准 JSON 格式，禁止输出任何其他文字、注释、说明或 markdown 代码块包裹：
 
 ```json
-{"dialog":"对外展示对话文本，尽量使用markdown格式提供更丰富的展示效果","entities":[{"name":"实体名称","type":"character|place|weapon|technique|item","desc":"实体简要描述，20-50字"}],"actions":["生成3-5个建议动作","……"],"player_update":{"current_location":"当前所在地点","current_status":"当前状态描述"},"ui_config":{"left_open":[],"right_open":[],"layout_hint":""},"save_flag":""}
+{"dialog":"对外展示对话文本，尽量使用markdown格式提供更丰富的展示效果","npc_name":"当前对话NPC名称，如'李长老'","npc_avatar":"当前对话NPC头像emoji，如'👴'","entities":[{"name":"实体名称","type":"character|place|weapon|technique|item","desc":"实体简要描述，20-50字"}],"actions":["生成3-5个建议动作","……"],"player_update":{"current_location":"当前所在地点","current_status":"当前状态描述"},"ui_config":{"left_open":[],"right_open":[],"layout_hint":""},"save_flag":""}
 ```
 
 ### 正确输出示例
@@ -21,6 +21,8 @@
 ```json
 {
   "dialog": "你沿着小径来到云溪村东头，只见一位白发老者正坐在石凳上品茶。他抬头望来，微微一笑：'小友，老夫李长老，在此等候多时了。'说罢，他从袖中取出一卷泛黄的古卷——正是失传已久的引气诀。",
+  "npc_name": "李长老",
+  "npc_avatar": "👴",
   "entities": [
     {"name": "云溪村", "type": "place", "desc": "青墟古域东隅小村，灵气稀薄，民风淳朴"},
     {"name": "李长老", "type": "character", "desc": "白发老者，云溪村隐居前辈，修为深不可测"},

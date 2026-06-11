@@ -416,7 +416,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
       });
 
-      // 处理 world_event：添加到事件列表
+      // 处理 world_event：添加到事件列表，并推送到聊天窗口
       eventSource.addEventListener('world_event', (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -426,6 +426,19 @@ export const useGameStore = create<GameState>((set, get) => ({
               events: [data, ...state.world.events].slice(0, 50),
             },
           }));
+
+          // 推送到聊天窗口（动态导入避免循环依赖）
+          const eventId = data.id || `world_event_${Date.now()}`;
+          const title = data.title || '';
+          const description = data.description || '';
+          if (title || description) {
+            import('./chatStore').then(({ useChatStore }) => {
+              useChatStore.getState().addEventMessage(String(eventId), String(title), String(description));
+            }).catch((err) => {
+              console.error('[Events] 推送 world_event 到聊天窗口失败:', err);
+            });
+          }
+
           console.log(`[Events] 世界事件: ${data.title}`);
         } catch (e) {
           console.error('解析 world_event SSE 数据失败:', e);

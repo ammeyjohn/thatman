@@ -259,7 +259,7 @@ class GMStorage:
                 base_url=self._couch_url,
                 auth=(self._couch_user, self._couch_password),
                 headers={"Content-Type": "application/json"},
-                timeout=httpx.Timeout(30.0),
+                timeout=httpx.Timeout(60.0),
                 limits=httpx.Limits(max_keepalive_connections=0),
             )
             self._couch_local.client = client
