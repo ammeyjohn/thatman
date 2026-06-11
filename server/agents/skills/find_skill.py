@@ -217,6 +217,97 @@ SKILL_DESCRIPTIONS = {
             },
         },
     },
+    "action_definition": {
+        "name": "action_definition",
+        "description": "动作类型定义管理工具，用于查询、创建和列出游戏中的动作类型定义。每个动作类型包含基础耗时、难度、约束规则（允许/禁止的操作）、耗时影响因子等",
+        "functions": {
+            "create_action_definition": {
+                "description": "创建或更新动作类型定义",
+                "params": [
+                    "definition: dict - 动作定义字典，必须包含 action_id, name, category, base_time_cost, difficulty, restrictions, time_modifiers 等字段",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, action_id, definition, error 的字典",
+            },
+            "get_action_definition": {
+                "description": "查询指定动作类型定义",
+                "params": [
+                    "action_id: str - 动作唯一标识",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, action_id, definition, error 的字典",
+            },
+            "list_action_definitions": {
+                "description": "列出所有动作类型定义，可按类别过滤",
+                "params": [
+                    "category: str - 类别过滤，如 修炼/战斗/移动/采集/炼制/休息/社交/即时，为空返回所有",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, total, definitions, error 的字典",
+            },
+        },
+    },
+    "character_status_skill": {
+        "name": "character_status_skill",
+        "description": "角色核心属性状态更新技能，带验证限制。所有核心属性（境界、等级、生命值、法力值、神识值、装备、背包）的修改必须通过此技能完成",
+        "functions": {
+            "update_character_status": {
+                "description": "更新角色核心属性状态（带验证限制）。核心属性包括：realm(境界)、realm_stage(境界阶段)、level(等级)、health/max_health(生命值)、mana/max_mana(法力值)、spirit/max_spirit(神识值)、equipment(装备)、inventory(背包)",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "updates: dict - 待更新的状态字段字典，仅包含需要更新的核心属性字段",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, uid, updated_fields/rejected_fields, reasons 的字典",
+            },
+        },
+    },
+    "karma_skill": {
+        "name": "karma_skill",
+        "description": "因果业力技能，记录因果事件、查询业力状态、善恶判定、因果羁绊管理、了结因果",
+        "functions": {
+            "record_karma": {
+                "description": "记录一条因果事件，更新玩家业力值",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "karma_type: str - 因果类型：grace(恩情)/enmity(仇怨)/fellowship(同门)/friendship(知己)/contract(契约)/neutral(陌路)",
+                    "target_id: str - 目标实体ID（NPC/宗门等）",
+                    "target_name: str - 目标名称",
+                    "description: str - 因果事件描述",
+                    "karma_value: int - 业力变化值，正=善/功德，负=恶/业障",
+                ],
+                "returns": "Dict[str, Any] - 包含 success, uid, karma_after, karma_level, karma_title 的字典",
+            },
+            "get_karma_status": {
+                "description": "获取玩家业力总览",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                ],
+                "returns": "Dict[str, Any] - 包含 karma, karma_level, karma_title, recent_records, bonds 的字典",
+            },
+            "judge_karma": {
+                "description": "善恶判定，根据行为描述返回善恶判定结果和建议业力值",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "action_description: str - 行为描述",
+                    "context: str - 行为上下文",
+                ],
+                "returns": "Dict[str, Any] - 包含 judgment, suggested_karma_value, reason 的字典",
+            },
+            "get_karma_bonds": {
+                "description": "获取玩家与NPC/实体的因果羁绊列表",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                ],
+                "returns": "Dict[str, Any] - 包含 bonds 列表的字典",
+            },
+            "resolve_karma": {
+                "description": "了结因果，了结后业力变化",
+                "params": [
+                    "uid: str - 玩家唯一标识",
+                    "target_id: str - 因果羁绊的目标实体ID",
+                    "resolution_type: str - 了结方式：repay(报恩)/betray(忘恩)/revenge(复仇)/forgive(宽恕)/part(分别)/reunite(重聚)/deepen(加深)/fulfill(履约)/break(违约)",
+                ],
+                "returns": "Dict[str, Any] - 包含 karma_change, karma_after, karma_level 的字典",
+            },
+        },
+    },
 }
 
 

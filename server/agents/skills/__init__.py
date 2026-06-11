@@ -24,11 +24,19 @@ Usage:
 
 from . import read_doc
 from . import find_skill
-from . import search_episode
 from . import couchdb_skill
 from . import memory_skill
-from . import vector_skill
 from . import character_status_skill
+from . import action_definition
+from . import karma_skill
+
+# search_episode 和 vector_skill 依赖 torch/qdrant，懒加载避免缺依赖时崩溃
+try:
+    from . import search_episode
+    from . import vector_skill
+    _HAS_VECTOR_DEPS = True
+except (ImportError, NameError):
+    _HAS_VECTOR_DEPS = False
 
 __all__ = [
     "read_doc",
@@ -38,4 +46,6 @@ __all__ = [
     "memory_skill",
     "vector_skill",
     "character_status_skill",
+    "action_definition",
+    "karma_skill",
 ]

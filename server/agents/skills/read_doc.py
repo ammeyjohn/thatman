@@ -51,6 +51,15 @@ DOC_FILES = {
     "npc_config.md": "NPC角色配置",
     "guild_config.md": "宗门势力配置",
     "task_config.md": "任务等级配置",
+    "gm_tools_reference.md": "GM工具函数参考",
+    "karma_rules.md": "因果业力规则",
+    "scene_consistency_rules.md": "场景一致性约束",
+    "output_format_spec.md": "输出格式规范",
+    "entity_rules.md": "实体字段规则",
+    "layout_hint_rules.md": "布局刷新规则",
+    "player_update_rules.md": "玩家更新规则",
+    "world_evolution_rules.md": "世界演进规则",
+    "tutorial_rules.md": "引导教程规则",
     # 中文文件名
     "世界观.md": "世界观设定",
 }

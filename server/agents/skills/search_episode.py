@@ -18,6 +18,8 @@ Search Episode Skill - 查询相似剧情技能
     )
 """
 
+from __future__ import annotations
+
 import os
 import logging
 from pathlib import Path
@@ -32,6 +34,8 @@ try:
 except ImportError as _import_err:
     _HAS_DEPS = False
     _IMPORT_ERROR = str(_import_err)
+    # torch 未安装时提供占位类型，避免类型注解 NameError
+    torch = None
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -100,86 +104,97 @@ _qdrant_client: Optional[Any] = None
 # Embedding 客户端
 # ───────────────────────────────────────────────
 
-class EmbeddingClient:
-    """基于 Qwen3-Embedding 本地模型的 Embedding 客户端"""
+if _HAS_DEPS:
+    class EmbeddingClient:
+        """基于 Qwen3-Embedding 本地模型的 Embedding 客户端"""
 
-    def __init__(
-        self,
-        model_name: str = DEFAULT_MODEL_NAME,
-        device: Optional[str] = None,
-        max_length: int = 512,
-    ):
-        if not _HAS_DEPS:
-            raise RuntimeError(f"缺少必要依赖: {_IMPORT_ERROR}")
+        def __init__(
+            self,
+            model_name: str = DEFAULT_MODEL_NAME,
+            device: Optional[str] = None,
+            max_length: int = 512,
+        ):
+            if not _HAS_DEPS:
+                raise RuntimeError(f"缺少必要依赖: {_IMPORT_ERROR}")
 
-        self.model_name = model_name
-        self.max_length = max_length
+            self.model_name = model_name
+            self.max_length = max_length
 
-        # 自动选择设备
-        if device:
-            self.device = torch.device(device)
-        elif torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
+            # 自动选择设备
+            if device:
+                self.device = torch.device(device)
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            elif torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
 
-        info_log(f"加载 Embedding 模型: {model_name}")
-        info_log(f"使用设备: {self.device}")
+            info_log(f"加载 Embedding 模型: {model_name}")
+            info_log(f"使用设备: {self.device}")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
-        self.model.to(self.device)
-        self.model.eval()
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+            self.model.to(self.device)
+            self.model.eval()
 
-        self._vector_size = self.model.config.hidden_size
-        info_log(f"向量维度: {self._vector_size}")
+            self._vector_size = self.model.config.hidden_size
+            info_log(f"向量维度: {self._vector_size}")
 
-    def _last_token_pooling(
-        self,
-        last_hidden_state: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Last token pooling：取每个序列最后一个非 padding token 的隐藏状态。"""
-        sequence_lengths = attention_mask.sum(dim=1) - 1
-        batch_size = last_hidden_state.shape[0]
-        pooled = last_hidden_state[
-            torch.arange(batch_size, device=last_hidden_state.device),
-            sequence_lengths,
-        ]
-        return pooled
+        def _last_token_pooling(
+            self,
+            last_hidden_state: torch.Tensor,
+            attention_mask: torch.Tensor,
+        ) -> torch.Tensor:
+            """Last token pooling：取每个序列最后一个非 padding token 的隐藏状态。"""
+            sequence_lengths = attention_mask.sum(dim=1) - 1
+            batch_size = last_hidden_state.shape[0]
+            pooled = last_hidden_state[
+                torch.arange(batch_size, device=last_hidden_state.device),
+                sequence_lengths,
+            ]
+            return pooled
 
-    @torch.no_grad()
-    def embed(self, texts: List[str]) -> List[List[float]]:
-        """批量生成 embedding。"""
-        if not texts:
-            return []
+        @torch.no_grad()
+        def embed(self, texts: List[str]) -> List[List[float]]:
+            """批量生成 embedding。"""
+            if not texts:
+                return []
 
-        try:
-            inputs = self.tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-            )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            try:
+                inputs = self.tokenizer(
+                    texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors="pt",
+                )
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            outputs = self.model(**inputs)
-            pooled = self._last_token_pooling(
-                outputs.last_hidden_state, inputs["attention_mask"]
-            )
-            normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
-            return normalized.cpu().tolist()
-        except Exception as e:
-            error_log(f"Embedding 生成失败: {e}")
-            return [[0.0] * self._vector_size] * len(texts)
+                outputs = self.model(**inputs)
+                pooled = self._last_token_pooling(
+                    outputs.last_hidden_state, inputs["attention_mask"]
+                )
+                normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
+                return normalized.cpu().tolist()
+            except Exception as e:
+                error_log(f"Embedding 生成失败: {e}")
+                return [[0.0] * self._vector_size] * len(texts)
 
-    @property
-    def vector_size(self) -> int:
-        """获取向量维度"""
-        return self._vector_size
+        @property
+        def vector_size(self) -> int:
+            """获取向量维度"""
+            return self._vector_size
+else:
+    class EmbeddingClient:  # type: ignore[no-redef]
+        """占位类，torch 未安装时使用"""
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(f"缺少必要依赖，无法使用 EmbeddingClient: {_IMPORT_ERROR}")
+
+        @property
+        def vector_size(self) -> int:
+            return 0
 
 
 def _get_embedding_client() -> Optional[EmbeddingClient]:
