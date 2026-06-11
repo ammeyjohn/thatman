@@ -329,6 +329,18 @@ def logout():
     """
     登出接口
 
-    前端负责清除本地存储的 token，后端仅返回成功响应。
+    请求体: {uid: "xxx"}（可选，用于标记离线）
+    前端负责清除本地存储的 token，后端标记玩家离线并返回成功响应。
     """
+    data = request.get_json() or {}
+    uid = data.get('uid', '')
+
+    if uid:
+        try:
+            from online_manager import get_online_manager
+            online_mgr = get_online_manager()
+            online_mgr.player_offline(uid, reason="logout")
+        except Exception as e:
+            error_log(f"登出离线处理失败: uid={uid}, 错误={e}")
+
     return jsonify({'success': True})

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond } from '../types';
+import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond, OnlinePlayer } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -77,6 +77,13 @@ interface GameState {
   karmaBonds: KarmaBond[];
   fetchKarmaStatus: () => Promise<void>;
   fetchKarmaBonds: () => Promise<void>;
+  onlinePlayers: OnlinePlayer[];
+  onlineCount: number;
+  _heartbeatInterval: number | null;
+  _startHeartbeat: () => void;
+  _stopHeartbeat: () => void;
+  sendHeartbeat: () => Promise<void>;
+  fetchOnlinePlayers: () => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -159,6 +166,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   _lastFetchNearbyTime: 0,
   karmaRecords: [],
   karmaBonds: [],
+  onlinePlayers: [],
+  onlineCount: 0,
+  _heartbeatInterval: null,
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -329,7 +339,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     disconnectEventsSSE(); // 保证只有一个连接
 
     try {
-      const eventSource = new EventSource(`${config.API_BASE_URL}/gm/events/sse`);
+      const uid = getOrCreateUserId();
+      const sseUrl = uid
+        ? `${config.API_BASE_URL}/gm/events/sse?uid=${encodeURIComponent(uid)}`
+        : `${config.API_BASE_URL}/gm/events/sse`;
+
+      const eventSource = new EventSource(sseUrl);
 
       // 处理 current_state：初始化全量状态
       eventSource.addEventListener('current_state', (event) => {
@@ -356,6 +371,27 @@ export const useGameStore = create<GameState>((set, get) => ({
               set((state) => ({ world: { ...state.world, ...updates } }));
             }
           }
+
+          // 处理附近在线玩家
+          if (Array.isArray(data.nearby_players)) {
+            const onlinePlayers: OnlinePlayer[] = data.nearby_players.map((p: Record<string, unknown>) => ({
+              uid: (p.uid as string) || '',
+              characterName: (p.character_name as string) || '',
+              location: (p.location as string) || '',
+              realm: (p.realm as string) || '',
+              realmStage: (p.realm_stage as string) || '',
+              status: (p.status as string) || '',
+              lastHeartbeat: (p.last_heartbeat as number) || 0,
+              onlineAt: (p.online_at as number) || 0,
+            }));
+            set({ onlinePlayers });
+          }
+
+          // 处理在线人数
+          if (typeof data.online_count === 'number') {
+            set({ onlineCount: data.online_count });
+          }
+
           console.log('[Events] 全量状态同步成功');
         } catch (e) {
           console.error('解析 current_state SSE 数据失败:', e);
@@ -450,6 +486,102 @@ export const useGameStore = create<GameState>((set, get) => ({
         // 心跳事件，仅用于保持连接活跃，无需处理
       });
 
+      // 处理 player_online：玩家上线
+      eventSource.addEventListener('player_online', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const newPlayer: OnlinePlayer = {
+            uid: data.uid || '',
+            characterName: data.character_name || '',
+            location: data.location || '',
+            realm: data.realm || '',
+            realmStage: data.realm_stage || '',
+            status: data.status || '',
+            lastHeartbeat: 0,
+            onlineAt: data.online_at || Date.now() / 1000,
+          };
+          set((state) => {
+            const filtered = state.onlinePlayers.filter(p => p.uid !== newPlayer.uid);
+            return {
+              onlinePlayers: [...filtered, newPlayer],
+              onlineCount: state.onlineCount + (state.onlinePlayers.some(p => p.uid === newPlayer.uid) ? 0 : 1),
+            };
+          });
+          console.log(`[Events] 玩家上线: ${data.character_name}`);
+        } catch (e) {
+          console.error('解析 player_online SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 player_offline：玩家下线
+      eventSource.addEventListener('player_offline', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          set((state) => ({
+            onlinePlayers: state.onlinePlayers.filter(p => p.uid !== data.uid),
+            onlineCount: Math.max(0, state.onlineCount - 1),
+          }));
+          console.log(`[Events] 玩家下线: ${data.character_name}`);
+        } catch (e) {
+          console.error('解析 player_offline SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 player_location_change：玩家位置变化
+      eventSource.addEventListener('player_location_change', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          set((state) => ({
+            onlinePlayers: state.onlinePlayers.map(p =>
+              p.uid === data.uid ? { ...p, location: data.new_location } : p
+            ),
+          }));
+          console.log(`[Events] 玩家位置变化: ${data.uid} -> ${data.new_location}`);
+        } catch (e) {
+          console.error('解析 player_location_change SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 private_message：私聊消息
+      eventSource.addEventListener('private_message', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // 动态导入 socialStore 处理私聊消息
+          import('./socialStore').then(({ useSocialStore }) => {
+            useSocialStore.getState().receivePrivateMessage(data);
+          }).catch(() => {});
+          console.log(`[Events] 收到私聊: ${data.from_name}`);
+        } catch (e) {
+          console.error('解析 private_message SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 area_message：区域消息
+      eventSource.addEventListener('area_message', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          import('./socialStore').then(({ useSocialStore }) => {
+            useSocialStore.getState().receiveAreaMessage(data);
+          }).catch(() => {});
+          console.log(`[Events] 区域消息: ${data.from_name}`);
+        } catch (e) {
+          console.error('解析 area_message SSE 数据失败:', e);
+        }
+      });
+
+      // 处理 social_request：社交请求（好友/组队/交易/切磋）
+      eventSource.addEventListener('social_request', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          import('./socialStore').then(({ useSocialStore }) => {
+            useSocialStore.getState().receiveSocialRequest(data);
+          }).catch(() => {});
+          console.log(`[Events] 社交请求: ${data.type} from ${data.from_name}`);
+        } catch (e) {
+          console.error('解析 social_request SSE 数据失败:', e);
+        }
+      });
+
       // 错误处理：自动重连
       eventSource.onerror = () => {
         console.error('Events SSE 连接错误，5秒后重连');
@@ -472,6 +604,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (eventsSSE) {
       eventsSSE.close();
       set({ eventsSSE: null });
+      // 停止心跳
+      useGameStore.getState()._stopHeartbeat();
       console.log('[Events] SSE 统一连接已断开');
     }
   },
@@ -580,6 +714,12 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       // 加载附近人物
       useGameStore.getState().fetchNearbyCharacters();
+
+      // 启动心跳
+      useGameStore.getState()._startHeartbeat();
+
+      // 加载在线玩家
+      useGameStore.getState().fetchOnlinePlayers();
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
@@ -1068,6 +1208,81 @@ export const useGameStore = create<GameState>((set, get) => ({
       console.log('[Karma] 因果羁绊加载成功');
     } catch (error) {
       console.error('获取因果羁绊失败:', error);
+    }
+  },
+
+  // ───────────────────────────────────────────────
+  // 在线玩家与心跳
+  // ───────────────────────────────────────────────
+
+  sendHeartbeat: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/heartbeat`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ uid }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        set({ onlineCount: data.online_count ?? 0 });
+      }
+    } catch (error) {
+      console.error('[Heartbeat] 心跳发送失败:', error);
+    }
+  },
+
+  _startHeartbeat: () => {
+    const { _heartbeatInterval } = get();
+    if (_heartbeatInterval) return;
+
+    // 立即发送一次
+    useGameStore.getState().sendHeartbeat();
+
+    // 每30秒发送心跳
+    const interval = window.setInterval(() => {
+      useGameStore.getState().sendHeartbeat();
+    }, 30000);
+
+    set({ _heartbeatInterval: interval });
+    console.log('[Heartbeat] 心跳已启动');
+  },
+
+  _stopHeartbeat: () => {
+    const { _heartbeatInterval } = get();
+    if (_heartbeatInterval) {
+      clearInterval(_heartbeatInterval);
+      set({ _heartbeatInterval: null });
+      console.log('[Heartbeat] 心跳已停止');
+    }
+  },
+
+  fetchOnlinePlayers: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/online-players?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.players)) {
+        const onlinePlayers: OnlinePlayer[] = data.players.map((p: Record<string, unknown>) => ({
+          uid: (p.uid as string) || '',
+          characterName: (p.character_name as string) || '',
+          location: (p.location as string) || '',
+          realm: (p.realm as string) || '',
+          realmStage: (p.realm_stage as string) || '',
+          status: (p.status as string) || '',
+          lastHeartbeat: (p.last_heartbeat as number) || 0,
+          onlineAt: (p.online_at as number) || 0,
+        }));
+        set({ onlinePlayers, onlineCount: data.online_count ?? onlinePlayers.length });
+        console.log('[OnlinePlayers] 在线玩家加载成功:', onlinePlayers.length);
+      }
+    } catch (error) {
+      console.error('获取在线玩家失败:', error);
     }
   },
 }));

@@ -1561,6 +1561,10 @@ def events_sse():
 
     汇集世界时间变化、天气变化、布局变化、世界事件等所有服务端自主推送事件。
     连接建立时立即发送 current_state 全量状态。
+    支持 uid 绑定，接收定向推送事件（私聊、玩家上线/下线等）。
+
+    查询参数:
+        uid: 玩家唯一ID（推荐，用于接收定向推送）
 
     事件格式:
         event: current_state
@@ -1577,6 +1581,24 @@ def events_sse():
 
         event: world_event
         data: {"id": "...", "title": "...", "description": "...", ...}
+
+        event: player_online
+        data: {"uid": "...", "character_name": "...", "location": "...", ...}
+
+        event: player_offline
+        data: {"uid": "...", "character_name": "...", "reason": "..."}
+
+        event: player_location_change
+        data: {"uid": "...", "old_location": "...", "new_location": "..."}
+
+        event: private_message
+        data: {"from_uid": "...", "from_name": "...", "content": "..."}
+
+        event: area_message
+        data: {"from_uid": "...", "from_name": "...", "location": "...", "content": "..."}
+
+        event: social_request
+        data: {"type": "friend|team|trade|combat", "from_uid": "...", "from_name": "...", ...}
     """
     try:
         uid = request.args.get('uid', '')
@@ -1597,10 +1619,34 @@ def events_sse():
         # 初始化世界事件调度器（懒启动）
         get_world_event_scheduler()
 
-        # 订阅 EventBus
+        # 订阅 EventBus，绑定 uid
         from event_bus import get_event_bus
         event_bus = get_event_bus()
-        q = event_bus.subscribe()
+        q = event_bus.subscribe(uid=uid)
+
+        # 如果有 uid，标记玩家上线并订阅区域频道
+        current_location = ""
+        if uid:
+            try:
+                from online_manager import get_online_manager
+                online_mgr = get_online_manager()
+                storage = _get_storage()
+                player_data = storage.couch_get_player(uid) if storage else {}
+                character_name = player_data.get("name", "") if player_data else ""
+                current_location = player_data.get("current_location", "") if player_data else ""
+                realm = player_data.get("realm", "") if player_data else ""
+                realm_stage = player_data.get("realm_stage", "") if player_data else ""
+                status = player_data.get("current_status", "") if player_data else ""
+
+                if character_name:
+                    online_mgr.player_online(uid, character_name, current_location,
+                                             realm=realm, realm_stage=realm_stage, status=status)
+
+                    # 订阅区域频道
+                    if current_location:
+                        event_bus.add_channel_subscription(q, f"area:{current_location}")
+            except Exception as e:
+                error_log(f"SSE 上线注册失败: uid={uid}, 错误={e}")
 
         def generate():
             import queue
@@ -1611,13 +1657,22 @@ def events_sse():
                     "weather": ws.get_current_weather(),
                 }
 
-                # 如有 uid，附加动作状态
+                # 如有 uid，附加动作状态和在线玩家信息
                 if uid:
                     try:
                         busy_mgr = get_player_busy_manager()
                         if busy_mgr:
                             action_state = busy_mgr.get_action_state(uid)
                             current_state["action_state"] = action_state
+                    except Exception:
+                        pass
+
+                    # 附加附近在线玩家
+                    try:
+                        from online_manager import get_online_manager
+                        online_mgr = get_online_manager()
+                        current_state["nearby_players"] = online_mgr.get_nearby_online_players(uid)
+                        current_state["online_count"] = online_mgr.get_online_count()
                     except Exception:
                         pass
 
@@ -1637,6 +1692,15 @@ def events_sse():
                 # 客户端断开连接
                 pass
             finally:
+                # 标记玩家下线
+                if uid:
+                    try:
+                        from online_manager import get_online_manager
+                        online_mgr = get_online_manager()
+                        online_mgr.player_offline(uid, reason="sse_disconnect")
+                    except Exception as e:
+                        error_log(f"SSE 下线处理失败: uid={uid}, 错误={e}")
+
                 event_bus.unsubscribe(q)
 
         return Response(generate(), mimetype='text/event-stream',
@@ -1946,6 +2010,124 @@ def interrupt_action():
         }), 500
 
 
+@gm_bp.route('/gm/heartbeat', methods=['POST'])
+def heartbeat():
+    """
+    玩家心跳接口
+
+    客户端定期调用（建议每30秒），维持在线状态。
+    超过60秒无心跳将自动标记离线。
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)"
+    }
+
+    响应格式:
+    {
+        "uid": "string",
+        "success": true,
+        "online_count": 5
+    }
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        from online_manager import get_online_manager
+        online_mgr = get_online_manager()
+        success = online_mgr.update_heartbeat(uid)
+        online_count = online_mgr.get_online_count()
+
+        return jsonify({
+            'uid': uid,
+            'success': success,
+            'online_count': online_count,
+        })
+    except Exception as e:
+        error_log(f"心跳处理失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/online-players', methods=['GET'])
+def get_online_players():
+    """
+    获取在线玩家列表
+
+    查询参数:
+        uid: 玩家唯一ID（可选，用于排除自己）
+        location: 位置过滤（可选）
+
+    响应格式:
+    {
+        "players": [
+            {
+                "uid": "...",
+                "character_name": "...",
+                "location": "...",
+                "realm": "...",
+                "realm_stage": "...",
+                "status": "...",
+                "online_at": 1234567890.0
+            }
+        ],
+        "online_count": 5
+    }
+    """
+    uid = request.args.get('uid', '')
+    location = request.args.get('location', '')
+
+    try:
+        from online_manager import get_online_manager
+        online_mgr = get_online_manager()
+
+        if location:
+            players = online_mgr.get_online_players(location=location)
+        elif uid:
+            players = online_mgr.get_nearby_online_players(uid)
+        else:
+            players = online_mgr.get_online_players()
+
+        return jsonify({
+            'players': players,
+            'online_count': online_mgr.get_online_count(),
+        })
+    except Exception as e:
+        error_log(f"获取在线玩家列表失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
 @gm_bp.route('/gm/key-events', methods=['GET'])
 def get_key_events():
     """
@@ -2199,9 +2381,31 @@ def get_nearby_characters():
         current_location = player_data.get("current_location", "") if player_data else ""
         current_status = player_data.get("current_status", "") if player_data else ""
 
-        # 3. 调用 LLM 补充当前场景中可能存在的其他角色
-        supplemented_characters = list(known_characters)
+        # 3. 获取同区域在线真实玩家
+        online_player_characters = []
         seen_names = {c["name"] for c in known_characters}
+        try:
+            from online_manager import get_online_manager
+            online_mgr = get_online_manager()
+            nearby_players = online_mgr.get_nearby_online_players(uid)
+            for p in nearby_players:
+                p_name = p.get("character_name", "")
+                if p_name and p_name not in seen_names:
+                    seen_names.add(p_name)
+                    online_player_characters.append({
+                        "name": p_name,
+                        "type": "player",
+                        "desc": f"{p.get('realm', '')}{p.get('realm_stage', '')}修士",
+                        "currentAction": p.get("status", ""),
+                        "avatar": "🧑",
+                        "uid": p.get("uid", ""),
+                        "isOnline": True,
+                    })
+        except Exception as e:
+            error_log(f"获取附近在线玩家失败: {e}")
+
+        # 4. 调用 LLM 补充当前场景中可能存在的其他角色
+        supplemented_characters = list(known_characters) + online_player_characters
 
         if current_location:
             try:
@@ -2235,11 +2439,20 @@ def get_nearby_characters():
                 )
 
                 content = response.choices[0].message.content.strip()
-                # 提取 JSON 数组
+                # 提取 JSON 数组（兼容 markdown 代码块包裹）
                 import re
-                json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                # 先尝试去除 markdown 代码块标记
+                content_cleaned = re.sub(r'^```(?:json)?\s*', '', content)
+                content_cleaned = re.sub(r'\s*```$', '', content_cleaned)
+                json_match = re.search(r'\[.*\]', content_cleaned, re.DOTALL)
                 if json_match:
-                    llm_characters = json.loads(json_match.group())
+                    json_str = json_match.group()
+                    # 替换中文标点
+                    json_str = json_str.replace('\u201c', '"').replace('\u201d', '"')
+                    json_str = json_str.replace('\u2018', "'").replace('\u2019', "'")
+                    json_str = json_str.replace('\uff0c', ',')
+                    json_str = json_str.replace('\uff1a', ':')
+                    llm_characters = json.loads(json_str)
                     for char in llm_characters:
                         if not isinstance(char, dict):
                             continue
@@ -2258,17 +2471,22 @@ def get_nearby_characters():
             except Exception as e:
                 error_log(f"LLM 补充附近角色失败: {e}")
 
-        # 4. 为每个角色生成 id 并格式化输出
+        # 5. 为每个角色生成 id 并格式化输出
         characters = []
         for idx, char in enumerate(supplemented_characters):
-            characters.append({
+            char_entry = {
                 "id": f"char_{idx}_{hash(char['name']) % 10000:04d}",
                 "name": char.get("name", ""),
                 "type": char.get("type", "npc"),
                 "desc": char.get("desc", ""),
                 "current_action": char.get("currentAction", ""),
                 "avatar": char.get("avatar", ""),
-            })
+            }
+            # 真实玩家附加字段
+            if char.get("uid"):
+                char_entry["uid"] = char["uid"]
+                char_entry["isOnline"] = char.get("isOnline", True)
+            characters.append(char_entry)
 
         return jsonify({
             'uid': uid,

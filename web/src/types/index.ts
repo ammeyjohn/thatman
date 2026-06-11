@@ -172,6 +172,50 @@ export interface NearbyCharacter {
   desc: string;
   currentAction: string;
   avatar?: string;
+  uid?: string;           // 真实玩家才有
+  isOnline?: boolean;     // 是否在线
+}
+
+export interface OnlinePlayer {
+  uid: string;
+  characterName: string;
+  location: string;
+  realm: string;
+  realmStage: string;
+  status: string;
+  lastHeartbeat: number;
+  onlineAt: number;
+}
+
+export interface ChatContact {
+  uid: string;
+  characterName: string;
+  realm: string;
+  realmStage: string;
+  lastMessage: string;
+  lastMessageTime: number;
+  unreadCount: number;
+  isOnline: boolean;
+}
+
+export interface PrivateMessage {
+  id: string;
+  fromUid: string;
+  fromName: string;
+  toUid: string;
+  toName: string;
+  content: string;
+  timestamp: number;
+  read: boolean;
+}
+
+export interface AreaMessage {
+  id: string;
+  fromUid: string;
+  fromName: string;
+  location: string;
+  content: string;
+  timestamp: number;
 }
 
 export interface Entity {

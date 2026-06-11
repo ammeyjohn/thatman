@@ -217,6 +217,9 @@ class GMStorage:
         self._db_key_events: str = f"{self._couch_db_prefix}key_events"
         self._db_history: str = f"{self._couch_db_prefix}history"
         self._db_karma_records: str = f"{self._couch_db_prefix}karma_records"
+        self._db_private_messages: str = f"{self._couch_db_prefix}private_messages"
+        self._db_area_messages: str = f"{self._couch_db_prefix}area_messages"
+        self._db_teams: str = f"{self._couch_db_prefix}teams"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -281,6 +284,9 @@ class GMStorage:
             self._db_key_events,
             self._db_history,
             self._db_karma_records,
+            self._db_private_messages,
+            self._db_area_messages,
+            self._db_teams,
         ]
         for db_name in db_names:
             try:
@@ -2594,3 +2600,166 @@ class GMStorage:
         """上下文管理器出口"""
         self.close()
         return False
+
+    # ================================================================
+    # 私聊消息操作
+    # ================================================================
+
+    def couch_save_private_message(self, msg_id: str, msg_data: dict) -> bool:
+        """保存私聊消息到 CouchDB"""
+        try:
+            resp = self._couch_request(
+                "PUT",
+                f"/{self._db_private_messages}/{msg_id}",
+                json_data=msg_data,
+            )
+            return resp.status_code in (201, 202)
+        except Exception as e:
+            error_log(f"保存私聊消息失败: {e}")
+            return False
+
+    def couch_get_private_messages(self, uid: str, peer_uid: str, limit: int = 50) -> list:
+        """获取两个用户之间的私聊记录"""
+        try:
+            # 查询涉及这两个用户的消息
+            body = {
+                "selector": {
+                    "$or": [
+                        {"from_uid": uid, "to_uid": peer_uid},
+                        {"from_uid": peer_uid, "to_uid": uid},
+                    ]
+                },
+                "sort": [{"timestamp": "desc"}],
+                "limit": limit,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_private_messages}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                docs = resp.json().get("docs", [])
+                for doc in docs:
+                    doc.pop("_rev", None)
+                return docs
+        except Exception as e:
+            error_log(f"获取私聊记录失败: {e}")
+        return []
+
+    def couch_mark_private_message_read(self, msg_id: str) -> bool:
+        """标记私聊消息为已读"""
+        try:
+            resp = self._couch_request("GET", f"/{self._db_private_messages}/{msg_id}")
+            if resp.status_code == 200:
+                doc = resp.json()
+                doc["read"] = True
+                resp2 = self._couch_request(
+                    "PUT",
+                    f"/{self._db_private_messages}/{msg_id}",
+                    json_data=doc,
+                )
+                return resp2.status_code in (201, 202)
+        except Exception as e:
+            error_log(f"标记私聊已读失败: {e}")
+        return False
+
+    def couch_get_chat_contacts(self, uid: str) -> list:
+        """获取聊天联系人列表（最近聊过的人）"""
+        try:
+            # 查询涉及该用户的所有消息，按时间倒序
+            body = {
+                "selector": {
+                    "$or": [
+                        {"from_uid": uid},
+                        {"to_uid": uid},
+                    ]
+                },
+                "sort": [{"timestamp": "desc"}],
+                "limit": 100,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_private_messages}/_find",
+                json_data=body,
+            )
+            if resp.status_code != 200:
+                return []
+
+            docs = resp.json().get("docs", [])
+            contacts = {}
+            for doc in docs:
+                # 确定对方 uid
+                peer_uid = doc.get("to_uid", "") if doc.get("from_uid") == uid else doc.get("from_uid", "")
+                if not peer_uid or peer_uid in contacts:
+                    continue
+
+                peer_name = doc.get("to_name", "") if doc.get("from_uid") == uid else doc.get("from_name", "")
+                contacts[peer_uid] = {
+                    "uid": peer_uid,
+                    "character_name": peer_name,
+                    "last_message": doc.get("content", ""),
+                    "last_message_time": doc.get("timestamp", 0),
+                    "unread_count": 0,
+                }
+
+            # 统计未读数
+            for peer_uid in contacts:
+                unread_body = {
+                    "selector": {
+                        "from_uid": peer_uid,
+                        "to_uid": uid,
+                        "read": False,
+                    },
+                    "limit": 100,
+                }
+                unread_resp = self._couch_request(
+                    "POST",
+                    f"/{self._db_private_messages}/_find",
+                    json_data=unread_body,
+                )
+                if unread_resp.status_code == 200:
+                    contacts[peer_uid]["unread_count"] = len(unread_resp.json().get("docs", []))
+
+            return list(contacts.values())
+        except Exception as e:
+            error_log(f"获取聊天联系人失败: {e}")
+        return []
+
+    # ================================================================
+    # 区域消息操作
+    # ================================================================
+
+    def couch_save_area_message(self, msg_id: str, msg_data: dict) -> bool:
+        """保存区域消息到 CouchDB"""
+        try:
+            resp = self._couch_request(
+                "PUT",
+                f"/{self._db_area_messages}/{msg_id}",
+                json_data=msg_data,
+            )
+            return resp.status_code in (201, 202)
+        except Exception as e:
+            error_log(f"保存区域消息失败: {e}")
+            return False
+
+    def couch_get_area_messages(self, location: str, limit: int = 50) -> list:
+        """获取区域聊天记录"""
+        try:
+            body = {
+                "selector": {"location": location},
+                "sort": [{"timestamp": "desc"}],
+                "limit": limit,
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_area_messages}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                docs = resp.json().get("docs", [])
+                for doc in docs:
+                    doc.pop("_rev", None)
+                return docs
+        except Exception as e:
+            error_log(f"获取区域聊天记录失败: {e}")
+        return []
