@@ -1970,11 +1970,13 @@ def get_key_events():
     try:
         storage = _get_storage()
         docs = storage.couch_get_key_events(uid, status=status)
-        # 移除 CouchDB 内部字段
+        # 处理 CouchDB 内部字段：_id 映射为 id，_rev 移除
         events = []
         for doc in docs:
             doc.pop('_rev', None)
-            doc.pop('_id', None)
+            # 将 _id 映射为 id，供前端使用
+            if '_id' in doc:
+                doc['id'] = doc.pop('_id')
             events.append(doc)
         return jsonify({
             'uid': uid,

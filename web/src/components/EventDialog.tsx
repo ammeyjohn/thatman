@@ -187,7 +187,7 @@ export function EventDialog({ open, onClose }: EventDialogProps) {
 
       {/* Confirm Delete Dialog */}
       <ConfirmDialog
-        open={confirmOpen}
+        isOpen={confirmOpen}
         onClose={() => {
           setConfirmOpen(false);
           setDeleteTarget(null);

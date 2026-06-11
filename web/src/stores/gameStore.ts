@@ -860,8 +860,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       const data = await response.json();
       if (Array.isArray(data.events)) {
-        const keyEvents: KeyEvent[] = data.events.map((e: Record<string, unknown>) => ({
-          id: (e._id as string) || (e.id as string) || '',
+        const keyEvents: KeyEvent[] = data.events.map((e: Record<string, unknown>, index: number) => ({
+          id: (e._id as string) || (e.id as string) || `temp-${index}-${Date.now()}`,
           uid: (e.uid as string) || '',
           title: (e.title as string) || '',
           description: (e.description as string) || '',
