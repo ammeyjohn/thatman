@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter } from '../types';
+import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -73,6 +73,10 @@ interface GameState {
   nearbyCharacters: NearbyCharacter[];
   _lastFetchNearbyTime: number;
   fetchNearbyCharacters: () => Promise<void>;
+  karmaRecords: KarmaRecord[];
+  karmaBonds: KarmaBond[];
+  fetchKarmaStatus: () => Promise<void>;
+  fetchKarmaBonds: () => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -97,6 +101,9 @@ const initialCharacter: CharacterState = {
   busyState: null,
   actionState: null,
   lastTimeCost: 0,
+  karma: 0,
+  karmaLevel: 3,
+  karmaTitle: '因果清净',
 };
 
 const initialWorld: WorldState = {
@@ -150,6 +157,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   historyDates: [],
   nearbyCharacters: [],
   _lastFetchNearbyTime: 0,
+  karmaRecords: [],
+  karmaBonds: [],
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -508,6 +517,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (typeof info.spirit === 'number') charUpdates.spirit = info.spirit;
       if (typeof info.max_spirit === 'number') charUpdates.maxSpirit = info.max_spirit;
       if (Array.isArray(info.equipment)) charUpdates.equipment = info.equipment;
+      if (typeof info.karma === 'number') charUpdates.karma = info.karma;
+      if (typeof info.karma_level === 'number') charUpdates.karmaLevel = info.karma_level;
+      if (typeof info.karma_title === 'string' && info.karma_title) charUpdates.karmaTitle = info.karma_title;
 
       if (Object.keys(charUpdates).length > 0) {
         set((state) => ({
@@ -997,6 +1009,52 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (error) {
       console.error('获取附近人物失败:', error);
+    }
+  },
+
+  fetchKarmaStatus: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/karma?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const charUpdates: Partial<CharacterState> = {};
+      if (typeof data.karma === 'number') charUpdates.karma = data.karma;
+      if (typeof data.karma_level === 'number') charUpdates.karmaLevel = data.karma_level;
+      if (typeof data.karma_title === 'string') charUpdates.karmaTitle = data.karma_title;
+      if (Object.keys(charUpdates).length > 0) {
+        set((state) => ({ character: { ...state.character, ...charUpdates } }));
+      }
+      if (Array.isArray(data.recent_records)) {
+        set({ karmaRecords: data.recent_records });
+      }
+      if (Array.isArray(data.bonds)) {
+        set({ karmaBonds: data.bonds });
+      }
+      console.log('[Karma] 业力状态加载成功');
+    } catch (error) {
+      console.error('获取业力状态失败:', error);
+    }
+  },
+
+  fetchKarmaBonds: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/gm/karma/bonds?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.bonds)) {
+        set({ karmaBonds: data.bonds });
+      }
+      console.log('[Karma] 因果羁绊加载成功');
+    } catch (error) {
+      console.error('获取因果羁绊失败:', error);
     }
   },
 }));

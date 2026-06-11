@@ -595,6 +595,139 @@
           }
         }
       ]
+    },
+    {
+      "name": "karma",
+      "description": "因果业力技能，记录因果事件、查询业力状态、善恶判定、因果羁绊管理、了结因果",
+      "module": "skills.karma_skill",
+      "category": "karma",
+      "functions": {
+        "record_karma": {
+          "description": "记录一条因果事件，更新玩家业力值",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "karma_type": {"type": "string", "description": "因果类型：grace(恩情)/enmity(仇怨)/fellowship(同门)/friendship(知己)/contract(契约)/neutral(陌路)", "required": true},
+            "target_id": {"type": "string", "description": "目标实体ID（NPC/宗门等）", "required": true},
+            "target_name": {"type": "string", "description": "目标名称", "required": true},
+            "description": {"type": "string", "description": "因果事件描述", "required": true},
+            "karma_value": {"type": "integer", "description": "业力变化值，正=善/功德，负=恶/业障", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 success, uid, karma_after, karma_level, karma_title 的字典"
+        },
+        "get_karma_status": {
+          "description": "获取玩家业力总览",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 karma, karma_level, karma_title, recent_records, bonds 的字典"
+        },
+        "judge_karma": {
+          "description": "善恶判定，根据行为描述返回善恶判定结果和建议业力值",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "action_description": {"type": "string", "description": "行为描述", "required": true},
+            "context": {"type": "string", "description": "行为上下文", "required": false, "default": ""}
+          },
+          "returns": "Dict[str, Any] - 包含 judgment, suggested_karma_value, reason 的字典"
+        },
+        "get_karma_bonds": {
+          "description": "获取玩家与NPC/实体的因果羁绊列表",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 bonds 列表的字典"
+        },
+        "resolve_karma": {
+          "description": "了结因果，了结后业力变化",
+          "params": {
+            "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
+            "target_id": {"type": "string", "description": "因果羁绊的目标实体ID", "required": true},
+            "resolution_type": {"type": "string", "description": "了结方式：repay(报恩)/betray(忘恩)/revenge(复仇)/forgive(宽恕)/part(分别)/reunite(重聚)/deepen(加深)/fulfill(履约)/break(违约)", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 karma_change, karma_after, karma_level 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "record_karma",
+            "description": "记录一条因果事件，更新玩家业力值。当玩家行为涉及善恶因果时（如救助NPC、掠夺他人、缔结契约等），必须调用此工具记录因果。业力值范围：恩情+10~+50、仇怨-50~-10、同门-15~+15、知己-40~+30、契约-30~+20、陌路0",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "karma_type": {"type": "string", "description": "因果类型：grace(恩情)、enmity(仇怨)、fellowship(同门情谊)、friendship(知己之交)、contract(契约关系)、neutral(陌路相逢)", "enum": ["grace", "enmity", "fellowship", "friendship", "contract", "neutral"]},
+                "target_id": {"type": "string", "description": "目标实体ID（NPC/宗门/法宝等）"},
+                "target_name": {"type": "string", "description": "目标名称"},
+                "description": {"type": "string", "description": "因果事件描述，如'救助受伤的李长老'、'掠夺散修灵石'"},
+                "karma_value": {"type": "integer", "description": "业力变化值，正值为善/功德，负值为恶/业障。单次变化不超过±50"}
+              },
+              "required": ["uid", "karma_type", "target_id", "target_name", "description", "karma_value"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "get_karma_status",
+            "description": "获取玩家业力总览，包括业力值、善恶等级、因果记录和因果羁绊",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"}
+              },
+              "required": ["uid"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "judge_karma",
+            "description": "善恶判定：根据行为描述和上下文，返回善恶判定结果和建议业力值。此工具仅提供判定参考，GM应根据剧情决定是否调用record_karma记录因果",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "action_description": {"type": "string", "description": "行为描述，如'救助受伤的修士'、'掠夺散修灵石'"},
+                "context": {"type": "string", "description": "行为上下文，如'该修士是邪修'、'对方先动手攻击'", "default": ""}
+              },
+              "required": ["uid", "action_description"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "get_karma_bonds",
+            "description": "获取玩家与NPC/实体的因果羁绊列表，用于了解当前未了结的因果关系",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"}
+              },
+              "required": ["uid"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "resolve_karma",
+            "description": "了结因果：恩报恩、仇复仇等，了结后业力变化。了结方式：grace→repay(报恩+15)/betray(忘恩-30)、enmity→revenge(复仇+10)/forgive(宽恕+25)、fellowship→part(分别0)/reunite(重聚+5)、friendship→betray(背叛-35)/deepen(加深+10)、contract→fulfill(履约+10)/break(违约-20)",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "uid": {"type": "string", "description": "玩家唯一标识"},
+                "target_id": {"type": "string", "description": "因果羁绊的目标实体ID"},
+                "resolution_type": {"type": "string", "description": "了结方式：repay(报恩)、betray(忘恩)、revenge(复仇)、forgive(宽恕)、part(分别)、reunite(重聚)、deepen(加深)、fulfill(履约)、break(违约)", "enum": ["repay", "betray", "revenge", "forgive", "part", "reunite", "deepen", "fulfill", "break"]}
+              },
+              "required": ["uid", "target_id", "resolution_type"]
+            }
+          }
+        }
+      ]
     }
   ]
 }

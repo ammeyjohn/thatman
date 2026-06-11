@@ -216,6 +216,7 @@ class GMStorage:
         self._db_action_definitions: str = f"{self._couch_db_prefix}action_definitions"
         self._db_key_events: str = f"{self._couch_db_prefix}key_events"
         self._db_history: str = f"{self._couch_db_prefix}history"
+        self._db_karma_records: str = f"{self._couch_db_prefix}karma_records"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -279,6 +280,7 @@ class GMStorage:
             self._db_action_definitions,
             self._db_key_events,
             self._db_history,
+            self._db_karma_records,
         ]
         for db_name in db_names:
             try:
@@ -2410,6 +2412,150 @@ class GMStorage:
                 return []
         except Exception as e:
             error_log(f"获取历史日期异常: uid={uid}, 错误={e}")
+            return []
+
+    # ================================================================
+    # 因果业力操作
+    # ================================================================
+
+    def couch_save_karma_record(self, uid: str, record_data: dict) -> dict:
+        """
+        保存因果记录
+
+        Args:
+            uid: 玩家唯一标识
+            record_data: 因果记录数据，包含 karma_type, target_id, target_name, description, karma_value 等
+
+        Returns:
+            CouchDB 写入响应，失败返回空字典
+        """
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+
+            record_id = record_data.get("_id") or f"karma_{uuid.uuid4().hex[:12]}"
+            record_data["_id"] = record_id
+            record_data["uid"] = uid
+            if "created_at" not in record_data:
+                record_data["created_at"] = now
+
+            # 检查是否已存在（更新场景）
+            existing_resp = self._couch_request("GET", f"/{self._db_karma_records}/{record_id}")
+            if existing_resp.status_code == 200:
+                existing = existing_resp.json()
+                if "_rev" in existing:
+                    record_data["_rev"] = existing["_rev"]
+
+            resp = self._couch_request("PUT", f"/{self._db_karma_records}/{record_id}", json_data=record_data)
+            if resp.status_code in (201, 202):
+                info_log(f"保存因果记录成功: uid={uid}, record_id={record_id}")
+                return resp.json()
+            else:
+                warn_log(f"保存因果记录失败: uid={uid}, record_id={record_id}, 状态码: {resp.status_code}")
+                return {}
+        except Exception as e:
+            error_log(f"保存因果记录异常: uid={uid}, 错误: {e}")
+            return {}
+
+    def couch_get_karma_records(self, uid: str, limit: int = 50) -> list:
+        """
+        获取玩家的因果记录列表
+
+        Args:
+            uid: 玩家唯一标识
+            limit: 返回记录数量上限
+
+        Returns:
+            因果记录列表，按 created_at 降序排列，失败返回空列表
+        """
+        try:
+            body = {
+                "selector": {"uid": uid},
+                "limit": limit,
+            }
+
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_karma_records}/_find",
+                json_data=body,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                # 按 created_at 降序排列（最新在前）
+                docs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                info_log(f"获取因果记录成功: uid={uid}, 数量={len(docs)}")
+                return docs
+            else:
+                warn_log(f"获取因果记录失败: uid={uid}, 状态码: {resp.status_code}")
+                return []
+        except Exception as e:
+            error_log(f"获取因果记录异常: uid={uid}, 错误: {e}")
+            return []
+
+    def couch_get_karma_bonds(self, uid: str) -> list:
+        """
+        获取玩家的因果羁绊列表
+
+        通过查询 link 数据库中 rel_type 以 "karma_" 开头的关联关系，
+        汇总每个目标的因果信息。
+
+        Args:
+            uid: 玩家唯一标识
+
+        Returns:
+            因果羁绊列表，每项包含 target_id, target_name, bond_type, bond_desc, total_karma
+        """
+        try:
+            # 查询所有与玩家相关的 karma 类型 link
+            all_bonds = []
+            karma_types = ["karma_grace", "karma_enmity", "karma_fellowship", "karma_friendship", "karma_contract", "karma_neutral"]
+
+            for rel_type in karma_types:
+                link_result = self.couch_get_link(uid, rel_type)
+                if link_result.get("success") and link_result.get("total", 0) > 0:
+                    docs = link_result.get("docs", [])
+                    for doc in docs:
+                        bond_type = rel_type.replace("karma_", "")
+                        target_id = doc.get("to_id", "") if doc.get("from_id") == uid else doc.get("from_id", "")
+                        target_name = ""
+
+                        # 尝试获取目标名称
+                        if target_id.startswith("npc_") or not target_id.startswith("user_"):
+                            try:
+                                entity = self.couch_get_entity(target_id)
+                                if entity and "name" in entity:
+                                    target_name = entity["name"]
+                            except Exception:
+                                pass
+
+                        all_bonds.append({
+                            "id": doc.get("_id", ""),
+                            "target_id": target_id,
+                            "target_name": target_name,
+                            "bond_type": bond_type,
+                            "bond_desc": doc.get("desc", ""),
+                            "resolved": False,
+                        })
+
+            # 按目标ID聚合，合并同一目标的多个因果
+            aggregated = {}
+            for bond in all_bonds:
+                key = f"{bond['target_id']}_{bond['bond_type']}"
+                if key not in aggregated:
+                    aggregated[key] = bond
+                else:
+                    # 合并描述
+                    existing_desc = aggregated[key].get("bond_desc", "")
+                    new_desc = bond.get("bond_desc", "")
+                    if new_desc and new_desc not in existing_desc:
+                        aggregated[key]["bond_desc"] = f"{existing_desc}；{new_desc}" if existing_desc else new_desc
+
+            result = list(aggregated.values())
+            info_log(f"获取因果羁绊成功: uid={uid}, 数量={len(result)}")
+            return result
+        except Exception as e:
+            error_log(f"获取因果羁绊异常: uid={uid}, 错误: {e}")
             return []
 
     # ================================================================

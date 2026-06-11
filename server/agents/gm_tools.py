@@ -16,6 +16,13 @@ from gm_logger import debug_log, info_log, warn_log, error_log
 from skills.read_doc import read_doc as _read_doc, list_available_docs as _list_available_docs, search_doc_content as _search_doc_content
 from skills.find_skill import list_all_skills as _list_all_skills, search_skill as _search_skill, get_skill_info as _get_skill_info
 from skills.character_status_skill import update_character_status as _update_character_status
+from skills.karma_skill import (
+    record_karma as _record_karma,
+    get_karma_status as _get_karma_status,
+    judge_karma as _judge_karma,
+    get_karma_bonds as _get_karma_bonds,
+    resolve_karma as _resolve_karma,
+)
 from action_definition_manager import get_action_definition_manager
 
 # 配置日志
@@ -242,6 +249,61 @@ def match_and_execute_tool(tool_name: str, tool_args: Dict[str, Any], storage) -
             if not updates:
                 return json.dumps({"success": False, "error": "updates 不能为空"}, ensure_ascii=False)
             result = _update_character_status(uid=uid, updates=updates, storage=storage)
+            return json.dumps(result, ensure_ascii=False)
+
+        # ---- 因果业力操作 ----
+        if tool_name == "record_karma":
+            uid = tool_args.get("uid", "")
+            karma_type = tool_args.get("karma_type", "")
+            target_id = tool_args.get("target_id", "")
+            target_name = tool_args.get("target_name", "")
+            description = tool_args.get("description", "")
+            karma_value = tool_args.get("karma_value", 0)
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            result = _record_karma(
+                uid=uid, karma_type=karma_type, target_id=target_id,
+                target_name=target_name, description=description,
+                karma_value=karma_value, storage=storage,
+            )
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "get_karma_status":
+            uid = tool_args.get("uid", "")
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            result = _get_karma_status(uid=uid, storage=storage)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "judge_karma":
+            uid = tool_args.get("uid", "")
+            action_description = tool_args.get("action_description", "")
+            context = tool_args.get("context", "")
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            if not action_description:
+                return json.dumps({"success": False, "error": "action_description 不能为空"}, ensure_ascii=False)
+            result = _judge_karma(uid=uid, action_description=action_description, context=context, storage=storage)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "get_karma_bonds":
+            uid = tool_args.get("uid", "")
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            result = _get_karma_bonds(uid=uid, storage=storage)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "resolve_karma":
+            uid = tool_args.get("uid", "")
+            target_id = tool_args.get("target_id", "")
+            resolution_type = tool_args.get("resolution_type", "")
+            if not uid:
+                return json.dumps({"success": False, "error": "uid 不能为空"}, ensure_ascii=False)
+            if not target_id:
+                return json.dumps({"success": False, "error": "target_id 不能为空"}, ensure_ascii=False)
+            if not resolution_type:
+                return json.dumps({"success": False, "error": "resolution_type 不能为空"}, ensure_ascii=False)
+            result = _resolve_karma(uid=uid, target_id=target_id, resolution_type=resolution_type, storage=storage)
             return json.dumps(result, ensure_ascii=False)
 
         # 未知工具

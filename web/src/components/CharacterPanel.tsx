@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User } from 'lucide-react';
+import { Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User, Scale } from 'lucide-react';
+import { KarmaDialog } from './KarmaDialog';
 
 export function CharacterPanel() {
   const { character, characterLayout } = useGameStore();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [karmaDialogOpen, setKarmaDialogOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const scriptsRef = useRef<string[]>([]);
@@ -210,9 +212,28 @@ export function CharacterPanel() {
                 </p>
               </div>
             )}
+
+            {/* Karma */}
+            {character.karmaTitle && (
+              <div
+                className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30 cursor-pointer hover:bg-[#1a2f2f]/80 transition-colors duration-200"
+                onClick={() => setKarmaDialogOpen(true)}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Scale className="w-4 h-4 text-[#C9A962]" />
+                  <span className="text-[#C9A962] text-xs font-medium">善恶</span>
+                </div>
+                <p className="text-[#e8e4dc] text-sm pl-6" style={{ fontFamily: 'Noto Serif SC, serif' }}>
+                  {character.karmaTitle}
+                </p>
+              </div>
+            )}
           </>
         )}
       </div>
+
+      {/* Karma Dialog */}
+      <KarmaDialog open={karmaDialogOpen} onClose={() => setKarmaDialogOpen(false)} />
     </div>
   );
 }

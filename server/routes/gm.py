@@ -2271,3 +2271,224 @@ def get_nearby_characters():
                 'code': 'internal_error'
             }
         }), 500
+
+
+# ================================================================
+# 因果业力 API
+# ================================================================
+
+@gm_bp.route('/gm/karma', methods=['GET'])
+def get_karma():
+    """
+    获取玩家业力总览
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    响应格式:
+    {
+        "uid": "string",
+        "karma": 0,
+        "karma_level": 3,
+        "karma_title": "因果清净",
+        "total_records": 0,
+        "total_bonds": 0,
+        "type_stats": {},
+        "recent_records": [],
+        "bonds": []
+    }
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        from skills.karma_skill import get_karma_status
+        storage = _get_storage()
+        result = get_karma_status(uid=uid, storage=storage)
+
+        if not result.get("success"):
+            return jsonify({
+                'error': {
+                    'message': result.get('error', '获取业力状态失败'),
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        # 移除 success 标记，直接返回数据
+        result.pop("success", None)
+        return jsonify(result)
+    except Exception as e:
+        error_log(f"获取业力状态失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/karma/bonds', methods=['GET'])
+def get_karma_bonds():
+    """
+    获取玩家因果羁绊列表
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    响应格式:
+    {
+        "uid": "string",
+        "total": 0,
+        "bonds": []
+    }
+    """
+    uid = request.args.get('uid', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        from skills.karma_skill import get_karma_bonds as _get_karma_bonds_api
+        storage = _get_storage()
+        result = _get_karma_bonds_api(uid=uid, storage=storage)
+
+        if not result.get("success"):
+            return jsonify({
+                'error': {
+                    'message': result.get('error', '获取因果羁绊失败'),
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        result.pop("success", None)
+        return jsonify(result)
+    except Exception as e:
+        error_log(f"获取因果羁绊失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
+@gm_bp.route('/gm/karma/resolve', methods=['POST'])
+def resolve_karma():
+    """
+    了结因果
+
+    请求格式（JSON POST）:
+    {
+        "uid": "string(玩家唯一ID)",
+        "target_id": "string(因果羁绊的目标实体ID)",
+        "resolution_type": "string(了结方式: repay/betray/revenge/forgive/part/reunite/deepen/fulfill/break)"
+    }
+
+    响应格式:
+    {
+        "uid": "string",
+        "target_id": "string",
+        "target_name": "string",
+        "bond_type": "string",
+        "resolution_type": "string",
+        "karma_change": 0,
+        "karma_after": 0,
+        "karma_level": 3,
+        "karma_title": "因果清净",
+        "message": "string"
+    }
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            'error': {
+                'message': '请求体不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    uid = data.get('uid', '')
+    target_id = data.get('target_id', '')
+    resolution_type = data.get('resolution_type', '')
+
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if not target_id:
+        return jsonify({
+            'error': {
+                'message': 'target_id 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    if not resolution_type:
+        return jsonify({
+            'error': {
+                'message': 'resolution_type 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        from skills.karma_skill import resolve_karma as _resolve_karma_api
+        storage = _get_storage()
+        result = _resolve_karma_api(uid=uid, target_id=target_id, resolution_type=resolution_type, storage=storage)
+
+        if not result.get("success"):
+            return jsonify({
+                'error': {
+                    'message': result.get('error', '了结因果失败'),
+                    'type': 'internal_server_error',
+                    'code': 'internal_error'
+                }
+            }), 500
+
+        result.pop("success", None)
+
+        # 发布 layout_change 到 EventBus（业力变化可能影响角色面板）
+        try:
+            from event_bus import get_event_bus
+            get_event_bus().publish("layout_change", {"panel_type": "character"})
+            info_log(f"发布 layout_change 事件: panel_type=character (业力变化)")
+        except Exception as e:
+            error_log(f"发布业力变化 layout_change 事件失败: {e}")
+
+        return jsonify(result)
+    except Exception as e:
+        error_log(f"了结因果失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500

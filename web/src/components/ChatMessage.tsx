@@ -131,6 +131,28 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
     insertTextAtCursor(entityName);
   };
 
+  // 检测业力变化
+  const karmaChange = (() => {
+    try {
+      const parsed = message.parsedJSON;
+      if (parsed && typeof parsed === 'object') {
+        const playerUpdate = parsed.player_update as Record<string, unknown> | undefined;
+        if (playerUpdate && typeof playerUpdate.karma === 'number') {
+          return playerUpdate.karma as number;
+        }
+      }
+      if (message.rawJSON) {
+        const raw = JSON.parse(message.rawJSON);
+        if (raw?.player_update && typeof raw.player_update.karma === 'number') {
+          return raw.player_update.karma as number;
+        }
+      }
+    } catch {
+      // 解析失败则忽略
+    }
+    return null;
+  })();
+
   if (message.type === 'system') {
     return (
       <div className="flex justify-center my-4">
@@ -363,6 +385,22 @@ export function ChatMessageItem({ message, onOptionClick }: ChatMessageProps) {
                 </div>
               )}
             </div>
+
+            {/* Karma Change Indicator */}
+            {!isPlayer && karmaChange !== null && karmaChange !== 0 && (
+              <div className="mt-1.5 flex items-center gap-1">
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded"
+                  style={{
+                    color: karmaChange > 0 ? '#FFD700' : '#E74C3C',
+                    background: karmaChange > 0 ? 'rgba(255,215,0,0.1)' : 'rgba(231,76,60,0.1)',
+                    textShadow: karmaChange > 0 ? '0 0 6px rgba(255,215,0,0.3)' : '0 0 6px rgba(231,76,60,0.3)',
+                  }}
+                >
+                  {karmaChange > 0 ? `功德 +${karmaChange}` : `业障 ${karmaChange}`}
+                </span>
+              </div>
+            )}
 
             {/* JSON Viewer */}
             {!isPlayer && showRawJSON && message.rawJSON && (

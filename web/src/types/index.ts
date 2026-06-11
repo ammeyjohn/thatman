@@ -20,6 +20,9 @@ export interface CharacterState {
   busyState: BusyState | null;
   actionState: ActionState | null;
   lastTimeCost: number;
+  karma: number;
+  karmaLevel: number;
+  karmaTitle: string;
 }
 
 export interface BusyState {
@@ -223,5 +226,27 @@ export interface StreamParseState {
   options: string[];
   hint: string;
   panel: string;
+}
+
+export interface KarmaRecord {
+  id: string;
+  uid: string;
+  karmaType: 'grace' | 'enmity' | 'fellowship' | 'friendship' | 'contract' | 'neutral';
+  targetId: string;
+  targetName: string;
+  description: string;
+  karmaValue: number;
+  resolved: boolean;
+  createdAt: string;
+}
+
+export interface KarmaBond {
+  id: string;
+  targetId: string;
+  targetName: string;
+  bondType: string;
+  bondDesc: string;
+  totalKarma: number;
+  resolved: boolean;
 }
 

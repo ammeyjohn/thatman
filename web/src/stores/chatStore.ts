@@ -275,6 +275,17 @@ export function applyGmResponseToGameStore(
     if (typeof playerUpdate.max_spirit === 'number') charUpdates.maxSpirit = playerUpdate.max_spirit;
     if (Array.isArray(playerUpdate.equipment)) charUpdates.equipment = playerUpdate.equipment;
 
+    // 业力字段同步
+    if (typeof playerUpdate.karma === 'number') {
+      charUpdates.karma = playerUpdate.karma;
+    }
+    if (typeof playerUpdate.karma_level === 'number') {
+      charUpdates.karmaLevel = playerUpdate.karma_level;
+    }
+    if (typeof playerUpdate.karma_title === 'string') {
+      charUpdates.karmaTitle = playerUpdate.karma_title;
+    }
+
     if (Object.keys(charUpdates).length > 0) {
       gameStore.updateCharacter(charUpdates);
     }
