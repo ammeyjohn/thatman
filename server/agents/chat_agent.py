@@ -405,8 +405,18 @@ class ChatAgent:
                     debug_log(f"收到完整响应: {content}")
                     yield content
             except Exception as e:
-                error_log(f"大模型调用失败: {e}")
-                raise
+                error_msg = str(e)
+                # 检查是否是连接错误
+                if "Connection error" in error_msg or "ConnectError" in error_msg or "connection" in error_msg.lower():
+                    error_log(f"[Connection Error] 大模型连接失败")
+                    error_log(f"  URL: {self._llm_api_base}")
+                    error_log(f"  模型: {self._llm_model_name}")
+                    error_log(f"  错误详情: {error_msg}")
+                    # 抛出包含详细信息的异常
+                    raise Exception(f"连接大模型失败 - URL: {self._llm_api_base}, 模型: {self._llm_model_name}, 错误: {error_msg}")
+                else:
+                    error_log(f"大模型调用失败: {e}")
+                    raise
             finally:
                 self._close_llm(llm)
 

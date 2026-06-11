@@ -433,8 +433,23 @@ class GameMaster:
                 debug_log(f"[llm_chat_loop] LLM响应成功: content长度={len(resp_content)}")
                 debug_log(f"[llm_chat_loop] LLM响应内容: {resp_content[:2000]}{'...' if len(resp_content) > 2000 else ''}")
             except Exception as e:
-                error_log(f"LLM 调用失败: {e}")
-                return {"dialog": f"大模型调用异常: {e}", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
+                error_msg = str(e)
+                # 检查是否是连接错误
+                if "Connection error" in error_msg or "ConnectError" in error_msg or "connection" in error_msg.lower():
+                    error_log(f"[Connection Error] LLM 连接失败")
+                    error_log(f"  URL: {self._chat_api_base}")
+                    error_log(f"  模型: {self._chat_model_name}")
+                    error_log(f"  错误详情: {error_msg}")
+                    return {
+                        "dialog": f"连接大模型失败 - URL: {self._chat_api_base}, 模型: {self._chat_model_name}, 错误: {error_msg}",
+                        "actions": [],
+                        "player_update": {},
+                        "ui_config": {},
+                        "save_flag": ""
+                    }
+                else:
+                    error_log(f"LLM 调用失败: {e}")
+                    return {"dialog": f"大模型调用异常: {e}", "actions": [], "player_update": {}, "ui_config": {}, "save_flag": ""}
 
             # 检查是否有工具调用
             tool_calls = message.tool_calls
@@ -1226,8 +1241,22 @@ class GameMaster:
                                     tool_calls_acc[idx]["function"]["arguments"] += tc.function.arguments
 
             except Exception as e:
-                error_log(f"LLM 流式调用失败: {e}")
-                yield self._sse_event("error", {"message": f"大模型调用异常: {e}", "detail": str(e)})
+                error_msg = str(e)
+                # 检查是否是连接错误
+                if "Connection error" in error_msg or "ConnectError" in error_msg or "connection" in error_msg.lower():
+                    error_log(f"[Connection Error] LLM 流式连接失败")
+                    error_log(f"  URL: {self._chat_api_base}")
+                    error_log(f"  模型: {self._chat_model_name}")
+                    error_log(f"  错误详情: {error_msg}")
+                    yield self._sse_event("error", {
+                        "message": f"连接大模型失败 - URL: {self._chat_api_base}, 模型: {self._chat_model_name}",
+                        "detail": error_msg,
+                        "url": self._chat_api_base,
+                        "model": self._chat_model_name
+                    })
+                else:
+                    error_log(f"LLM 流式调用失败: {e}")
+                    yield self._sse_event("error", {"message": f"大模型调用异常: {e}", "detail": str(e)})
                 return
 
             # 检查是否有工具调用

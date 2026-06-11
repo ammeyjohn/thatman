@@ -193,10 +193,20 @@ def chat_completions():
             return jsonify(response_data)
 
     except Exception as e:
-        error_log(f"处理请求时出错: {e}")
+        error_msg = str(e)
+        error_log(f"处理请求时出错: {error_msg}")
+        # 检查是否是连接错误，返回更详细的信息
+        if "连接大模型失败" in error_msg or "Connection error" in error_msg or "ConnectError" in error_msg:
+            return jsonify({
+                'error': {
+                    'message': error_msg,
+                    'type': 'connection_error',
+                    'code': 'llm_connection_error'
+                }
+            }), 503
         return jsonify({
             'error': {
-                'message': f'服务器内部错误: {str(e)}',
+                'message': f'服务器内部错误: {error_msg}',
                 'type': 'internal_server_error',
                 'code': 'internal_error'
             }
