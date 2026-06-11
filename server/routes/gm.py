@@ -15,6 +15,7 @@ from gm_logger import debug_log, info_log, error_log
 from layout_generator import LayoutGenerator, get_layout_generator
 from world_time_service import WorldTimeService, set_world_time_service
 from weather_service import WeatherService, set_weather_service
+from world_event_scheduler import WorldEventScheduler, set_world_event_scheduler
 from player_busy_manager import PlayerBusyManager, set_player_busy_manager, get_player_busy_manager
 from action_definition_manager import ActionDefinitionManager, set_action_definition_manager, get_action_definition_manager
 from routes.auth import _verify_token
@@ -83,6 +84,28 @@ def get_weather_service():
         except Exception as e:
             error_log(f"WeatherService 初始化失败: {e}")
     return _weather_service
+
+
+# 初始化 WorldEventScheduler 实例
+_world_event_scheduler = None
+
+
+def get_world_event_scheduler():
+    """获取或初始化 WorldEventScheduler 实例（单例）"""
+    global _world_event_scheduler
+    if _world_event_scheduler is None:
+        try:
+            gm = get_gm()
+            if gm.storage:
+                _world_event_scheduler = WorldEventScheduler(gm.storage, gm, gm.config)
+                _world_event_scheduler.start()
+                set_world_event_scheduler(_world_event_scheduler)
+                info_log("WorldEventScheduler 初始化并启动成功")
+            else:
+                error_log("WorldEventScheduler 初始化失败: GMStorage 不可用")
+        except Exception as e:
+            error_log(f"WorldEventScheduler 初始化失败: {e}")
+    return _world_event_scheduler
 
 
 # 初始化 PlayerBusyManager 实例
@@ -379,6 +402,25 @@ def gm_chat():
         if req_type == 'world_tick':
             info_log(f"处理 world_tick 请求 - uid={uid}")
             result = gm.world_tick_task()
+
+            # 发布 world_event 和 layout_change 到 EventBus
+            try:
+                ui_config = result.get("ui_config", {})
+                world_events = ui_config.get("world_events", [])
+                if isinstance(world_events, list) and world_events:
+                    from event_bus import get_event_bus
+                    for evt in world_events:
+                        if isinstance(evt, dict):
+                            get_event_bus().publish("world_event", evt)
+                    info_log(f"发布 world_event 事件: 数量={len(world_events)}")
+
+                layout_hint = ui_config.get("layout_hint")
+                if layout_hint:
+                    from event_bus import get_event_bus
+                    get_event_bus().publish("layout_change", {"panel_type": layout_hint})
+                    info_log(f"发布 layout_change 事件: panel_type={layout_hint}")
+            except Exception as e:
+                error_log(f"发布 world_tick 事件到 EventBus 失败: {e}")
         elif stream:
             # 流式响应
             info_log(f"处理流式 chat 请求 - uid={uid}, current_area={current_area}")
@@ -1541,6 +1583,9 @@ def events_sse():
                     'code': 'internal_error'
                 }
             }), 500
+
+        # 初始化世界事件调度器（懒启动）
+        get_world_event_scheduler()
 
         # 订阅 EventBus
         from event_bus import get_event_bus
