@@ -66,18 +66,6 @@ export function WorldEventPanel() {
           </div>
         )}
 
-        {/* Location — 始终显示 */}
-        {world.location && (
-          <div className="mb-4 p-3 bg-gradient-to-r from-[#3d6a6a]/20 to-transparent rounded-lg border border-[#3d6a6a]/30">
-            <div className="flex items-center gap-2 text-[#5ab8b8]">
-              <MapPin className="w-4 h-4" />
-              <span className="text-sm font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>
-                {world.location}
-              </span>
-            </div>
-          </div>
-        )}
-
         {worldLayout ? (
           // 动态 HTML 布局渲染
           <div ref={layoutRef} dangerouslySetInnerHTML={{ __html: worldLayout }} />

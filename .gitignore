@@ -41,3 +41,5 @@ __pycache__/
 story/
 data/
 hf_cache/
+
+server/config.yaml
