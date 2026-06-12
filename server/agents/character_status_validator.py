@@ -45,6 +45,7 @@ CORE_STATUS_FIELDS = {
     "realm", "realm_stage", "level",
     "health", "max_health", "mana", "max_mana", "spirit", "max_spirit",
     "equipment", "inventory",
+    "techniques", "active_buffs", "titles", "injuries", "fatigue", "mental_state",
 }
 
 # ============================================================
@@ -65,6 +66,32 @@ MAX_EQUIPMENT_CHANGE = 3
 
 # 单次背包物品种类增减上限
 MAX_INVENTORY_CHANGE = 5
+
+# 单次功法增减上限
+MAX_TECHNIQUES_CHANGE = 2
+
+# 单次 buff 增减上限
+MAX_BUFFS_CHANGE = 3
+
+# 单次称号增减上限
+MAX_TITLES_CHANGE = 2
+
+# 单次伤势增减上限
+MAX_INJURIES_CHANGE = 3
+
+# 疲劳值范围
+FATIGUE_MIN = 0
+FATIGUE_MAX = 100
+
+# 疲劳值单次最大变化
+MAX_FATIGUE_CHANGE = 30
+
+# 心神状态值范围
+MENTAL_STATE_MIN = 0
+MENTAL_STATE_MAX = 100
+
+# 心神状态单次最大变化
+MAX_MENTAL_STATE_CHANGE = 20
 
 
 class CharacterStatusValidator:
@@ -141,6 +168,18 @@ class CharacterStatusValidator:
             reasons = CharacterStatusValidator._validate_equipment(old_value, new_value)
         elif field == "inventory":
             reasons = CharacterStatusValidator._validate_inventory(old_value, new_value)
+        elif field == "techniques":
+            reasons = CharacterStatusValidator._validate_techniques(old_value, new_value)
+        elif field == "active_buffs":
+            reasons = CharacterStatusValidator._validate_buffs(old_value, new_value)
+        elif field == "titles":
+            reasons = CharacterStatusValidator._validate_titles(old_value, new_value)
+        elif field == "injuries":
+            reasons = CharacterStatusValidator._validate_injuries(old_value, new_value)
+        elif field == "fatigue":
+            reasons = CharacterStatusValidator._validate_fatigue(old_value, new_value)
+        elif field == "mental_state":
+            reasons = CharacterStatusValidator._validate_mental_state(old_value, new_value)
 
         return reasons
 
@@ -424,6 +463,205 @@ class CharacterStatusValidator:
         return []
 
     @staticmethod
+    def _validate_techniques(old_techniques: Optional[list], new_techniques: list) -> List[str]:
+        """
+        验证功法变更
+
+        规则：单次增减功法数量不超过 MAX_TECHNIQUES_CHANGE
+        """
+        if not isinstance(new_techniques, list):
+            return [f"功法数据必须为数组: {type(new_techniques)}"]
+
+        if old_techniques is None:
+            debug_log(f"首次设置功法: {len(new_techniques)}个")
+            return []
+
+        if not isinstance(old_techniques, list):
+            warn_log("旧功法数据格式异常，跳过功法数量验证")
+            return []
+
+        change_count = abs(len(new_techniques) - len(old_techniques))
+        if change_count > MAX_TECHNIQUES_CHANGE:
+            return [
+                f"功法变更数量过大: {len(old_techniques)} → {len(new_techniques)}（变化 {change_count}个），"
+                f"单次最多变更 {MAX_TECHNIQUES_CHANGE} 个"
+            ]
+
+        return []
+
+    @staticmethod
+    def _validate_buffs(old_buffs: Optional[list], new_buffs: list) -> List[str]:
+        """
+        验证增益/减益状态变更
+
+        规则：单次增减 buff 数量不超过 MAX_BUFFS_CHANGE
+        """
+        if not isinstance(new_buffs, list):
+            return [f"增益/减益状态数据必须为数组: {type(new_buffs)}"]
+
+        if old_buffs is None:
+            debug_log(f"首次设置增益/减益状态: {len(new_buffs)}个")
+            return []
+
+        if not isinstance(old_buffs, list):
+            warn_log("旧增益/减益状态数据格式异常，跳过数量验证")
+            return []
+
+        change_count = abs(len(new_buffs) - len(old_buffs))
+        if change_count > MAX_BUFFS_CHANGE:
+            return [
+                f"增益/减益状态变更数量过大: {len(old_buffs)} → {len(new_buffs)}（变化 {change_count}个），"
+                f"单次最多变更 {MAX_BUFFS_CHANGE} 个"
+            ]
+
+        return []
+
+    @staticmethod
+    def _validate_titles(old_titles: Optional[list], new_titles: list) -> List[str]:
+        """
+        验证称号变更
+
+        规则：单次增减称号数量不超过 MAX_TITLES_CHANGE
+        """
+        if not isinstance(new_titles, list):
+            return [f"称号数据必须为数组: {type(new_titles)}"]
+
+        if old_titles is None:
+            debug_log(f"首次设置称号: {len(new_titles)}个")
+            return []
+
+        if not isinstance(old_titles, list):
+            warn_log("旧称号数据格式异常，跳过称号数量验证")
+            return []
+
+        change_count = abs(len(new_titles) - len(old_titles))
+        if change_count > MAX_TITLES_CHANGE:
+            return [
+                f"称号变更数量过大: {len(old_titles)} → {len(new_titles)}（变化 {change_count}个），"
+                f"单次最多变更 {MAX_TITLES_CHANGE} 个"
+            ]
+
+        return []
+
+    @staticmethod
+    def _validate_injuries(old_injuries: Optional[list], new_injuries: list) -> List[str]:
+        """
+        验证伤势变更
+
+        规则：单次增减伤势数量不超过 MAX_INJURIES_CHANGE
+        """
+        if not isinstance(new_injuries, list):
+            return [f"伤势数据必须为数组: {type(new_injuries)}"]
+
+        if old_injuries is None:
+            debug_log(f"首次设置伤势: {len(new_injuries)}个")
+            return []
+
+        if not isinstance(old_injuries, list):
+            warn_log("旧伤势数据格式异常，跳过伤势数量验证")
+            return []
+
+        change_count = abs(len(new_injuries) - len(old_injuries))
+        if change_count > MAX_INJURIES_CHANGE:
+            return [
+                f"伤势变更数量过大: {len(old_injuries)} → {len(new_injuries)}（变化 {change_count}个），"
+                f"单次最多变更 {MAX_INJURIES_CHANGE} 个"
+            ]
+
+        return []
+
+    @staticmethod
+    def _validate_fatigue(old_fatigue: Optional[Dict], new_fatigue: Dict) -> List[str]:
+        """
+        验证疲劳度变更
+
+        规则：
+        - value 范围 0-100
+        - 单次变化不超过 MAX_FATIGUE_CHANGE
+        """
+        if not isinstance(new_fatigue, dict):
+            return [f"疲劳度数据必须为对象: {type(new_fatigue)}"]
+
+        new_value = new_fatigue.get("value")
+        if new_value is None:
+            return ["疲劳度缺少 value 字段"]
+
+        try:
+            new_value = int(new_value)
+        except (TypeError, ValueError):
+            return [f"疲劳度 value 必须为数字: {new_value}"]
+
+        if new_value < FATIGUE_MIN or new_value > FATIGUE_MAX:
+            return [f"疲劳度 value 超出范围: {new_value}，合法范围 [{FATIGUE_MIN}, {FATIGUE_MAX}]"]
+
+        if old_fatigue is None:
+            debug_log(f"首次设置疲劳度: {new_value}")
+            return []
+
+        if not isinstance(old_fatigue, dict):
+            warn_log("旧疲劳度数据格式异常，跳过疲劳度验证")
+            return []
+
+        old_value = old_fatigue.get("value")
+        if old_value is not None:
+            try:
+                old_value = int(old_value)
+                change = abs(new_value - old_value)
+                if change > MAX_FATIGUE_CHANGE:
+                    return [
+                        f"疲劳度变化过大: {old_value} → {new_value}（变化 {change}），"
+                        f"单次最大变化 {MAX_FATIGUE_CHANGE}"
+                    ]
+            except (TypeError, ValueError):
+                warn_log(f"旧疲劳度 value 异常: {old_value}，跳过变化验证")
+
+        return []
+
+    @staticmethod
+    def _validate_mental_state(old_mental: Optional[Dict], new_mental: Dict) -> List[str]:
+        """
+        验证心神状态变更
+
+        规则：
+        - clarity/dao_heart 范围 0-100
+        - 单次变化不超过 MAX_MENTAL_STATE_CHANGE
+        """
+        if not isinstance(new_mental, dict):
+            return [f"心神状态数据必须为对象: {type(new_mental)}"]
+
+        reasons = []
+
+        for field_name in ("clarity", "dao_heart"):
+            new_val = new_mental.get(field_name)
+            if new_val is not None:
+                try:
+                    new_val = int(new_val)
+                    if new_val < MENTAL_STATE_MIN or new_val > MENTAL_STATE_MAX:
+                        reasons.append(
+                            f"心神状态 {field_name} 超出范围: {new_val}，"
+                            f"合法范围 [{MENTAL_STATE_MIN}, {MENTAL_STATE_MAX}]"
+                        )
+                        continue
+
+                    if old_mental is not None and isinstance(old_mental, dict):
+                        old_val = old_mental.get(field_name)
+                        if old_val is not None:
+                            try:
+                                old_val = int(old_val)
+                                change = abs(new_val - old_val)
+                                if change > MAX_MENTAL_STATE_CHANGE:
+                                    reasons.append(
+                                        f"心神状态 {field_name} 变化过大: {old_val} → {new_val}（变化 {change}），"
+                                        f"单次最大变化 {MAX_MENTAL_STATE_CHANGE}"
+                                    )
+                            except (TypeError, ValueError):
+                                pass
+                except (TypeError, ValueError):
+                    reasons.append(f"心神状态 {field_name} 必须为数字: {new_val}")
+
+        return reasons
+
+    @staticmethod
     def sanitize_updates(old_status: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
         """
         清洗更新数据：对可截断的字段进行截断处理，移除不合法的拒绝型字段
@@ -465,6 +703,35 @@ class CharacterStatusValidator:
                         warn_log(f"截断 {field}: {new_value} → {max_value}")
                 except (TypeError, ValueError):
                     fields_to_remove.append(field)
+            elif field == "fatigue":
+                # 疲劳度截断型：value 超出范围时截断
+                if isinstance(new_value, dict) and "value" in new_value:
+                    try:
+                        val = int(new_value["value"])
+                        if val < FATIGUE_MIN:
+                            new_value["value"] = FATIGUE_MIN
+                            warn_log(f"截断 fatigue.value: {val} → {FATIGUE_MIN}")
+                        elif val > FATIGUE_MAX:
+                            new_value["value"] = FATIGUE_MAX
+                            warn_log(f"截断 fatigue.value: {val} → {FATIGUE_MAX}")
+                    except (TypeError, ValueError):
+                        fields_to_remove.append(field)
+            elif field == "mental_state":
+                # 心神状态截断型：clarity/dao_heart 超出范围时截断
+                if isinstance(new_value, dict):
+                    for sub_field in ("clarity", "dao_heart"):
+                        if sub_field in new_value:
+                            try:
+                                val = int(new_value[sub_field])
+                                if val < MENTAL_STATE_MIN:
+                                    new_value[sub_field] = MENTAL_STATE_MIN
+                                    warn_log(f"截断 mental_state.{sub_field}: {val} → {MENTAL_STATE_MIN}")
+                                elif val > MENTAL_STATE_MAX:
+                                    new_value[sub_field] = MENTAL_STATE_MAX
+                                    warn_log(f"截断 mental_state.{sub_field}: {val} → {MENTAL_STATE_MAX}")
+                            except (TypeError, ValueError):
+                                del new_value[sub_field]
+                                warn_log(f"移除 mental_state.{sub_field}: 值非数字")
             else:
                 # 拒绝型字段：验证失败则移除
                 old_value = old_status.get(field)

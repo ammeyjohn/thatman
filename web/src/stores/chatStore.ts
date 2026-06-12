@@ -289,6 +289,18 @@ export function applyGmResponseToGameStore(
       charUpdates.karmaTitle = playerUpdate.karma_title;
     }
 
+    // 扩展状态字段同步
+    if (Array.isArray(playerUpdate.techniques)) charUpdates.techniques = playerUpdate.techniques;
+    if (Array.isArray(playerUpdate.active_buffs)) charUpdates.activeBuffs = playerUpdate.active_buffs;
+    if (Array.isArray(playerUpdate.titles)) charUpdates.titles = playerUpdate.titles;
+    if (Array.isArray(playerUpdate.injuries)) charUpdates.injuries = playerUpdate.injuries;
+    if (playerUpdate.fatigue && typeof playerUpdate.fatigue === 'object') {
+      charUpdates.fatigue = playerUpdate.fatigue as any;
+    }
+    if (playerUpdate.mental_state && typeof playerUpdate.mental_state === 'object') {
+      charUpdates.mentalState = playerUpdate.mental_state as any;
+    }
+
     if (Object.keys(charUpdates).length > 0) {
       gameStore.updateCharacter(charUpdates);
     }

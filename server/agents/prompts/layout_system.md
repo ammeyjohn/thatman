@@ -133,7 +133,7 @@ JS 代码通过 `window.__LAYOUT_DATA__` 读取实时数据，示例：
 
 ```javascript
 var data = window.__LAYOUT_DATA__ || {};
-// 角色面板可用字段：name, realm, realmStage, level, health, maxHealth, mana, maxMana, spirit, maxSpirit, spiritRoot, currentLocation, currentStatus, birthDate, lifespan, clothing, inventory, equipment
+// 角色面板可用字段：name, realm, realmStage, level, health, maxHealth, mana, maxMana, spirit, maxSpirit, spiritRoot, currentLocation, currentStatus, birthDate, lifespan, clothing, inventory, equipment, techniques, activeBuffs, titles, injuries, fatigue, mentalState
 // 世界面板可用字段：time, timePeriod, weather, weatherDesc, spiritTide, spiritTideIntensity, location, events
 ```
 
@@ -273,8 +273,11 @@ if (birthDate) {
 | equipment | 装备 | 🛡️ | equipment[] | 已装备的法宝、防具等 |
 | inventory | 背包 | 🎒 | inventory[] | 携带的物品、材料、灵石等 |
 | techniques | 功法 | 📜 | techniques[] | 已学功法、秘术列表 |
-| buffs | 状态效果 | 🔥 | buffs[] | 当前增益/减益状态 |
+| buffs | 状态效果 | 🔥 | activeBuffs[] | 当前增益/减益状态 |
 | titles | 称号 | ⭐ | titles[] | 获得的称号、成就 |
+| injuries | 伤势 | 🩸 | injuries[] | 当前伤势列表 |
+| fatigue | 疲劳度 | 😴 | fatigue | 疲劳值与等级 |
+| mental_state | 心神状态 | 🧘 | mentalState | 清明度、情绪、道心 |
 
 **角色面板数据字段说明**：
 
@@ -297,6 +300,12 @@ lifespan: string — 寿元
 clothing: string — 衣着描述
 inventory: array — 背包物品列表
 equipment: array — 装备列表
+techniques: array — 功法列表，每项含 id/name/type/level/effect
+activeBuffs: array — 增益/减益状态列表，每项含 id/name/type/category/effect/duration_minutes/remaining_minutes/applied_at/stackable
+titles: array — 称号列表，每项含 id/name/desc/source/acquired_at/is_equipped
+injuries: array — 伤势列表，每项含 id/name/severity/body_part/health_penalty/mana_penalty/spirit_penalty/recovery_minutes/remaining_minutes/caused_at/cause
+fatigue: object — 疲劳度，含 value(0-100)/level(refreshed|normal|tired|exhausted|collapsed)/recovery_rate/accumulation_rate
+mentalState: object — 心神状态，含 clarity(0-100)/mood(calm|focused|anxious|agitated|enlightened)/dao_heart(0-100)
 ```
 
 ### world 面板

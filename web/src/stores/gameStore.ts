@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond, OnlinePlayer, SpiritStones, Stall } from '../types';
+import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond, OnlinePlayer, SpiritStones, Stall, FatigueState, MentalState } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -122,6 +122,12 @@ const initialCharacter: CharacterState = {
   karma: 0,
   karmaLevel: 3,
   karmaTitle: '因果清净',
+  techniques: [],
+  activeBuffs: [],
+  titles: [],
+  injuries: [],
+  fatigue: { value: 10, level: 'normal' as const, recovery_rate: 5, accumulation_rate: 1 },
+  mentalState: { clarity: 70, mood: 'calm', dao_heart: 60 },
   spiritStones: { low: 100, medium: 0, high: 0, top: 0 },
 };
 
@@ -681,6 +687,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (typeof info.karma === 'number') charUpdates.karma = info.karma;
       if (typeof info.karma_level === 'number') charUpdates.karmaLevel = info.karma_level;
       if (typeof info.karma_title === 'string' && info.karma_title) charUpdates.karmaTitle = info.karma_title;
+      if (Array.isArray(info.techniques)) charUpdates.techniques = info.techniques;
+      if (Array.isArray(info.active_buffs)) charUpdates.activeBuffs = info.active_buffs;
+      if (Array.isArray(info.titles)) charUpdates.titles = info.titles;
+      if (Array.isArray(info.injuries)) charUpdates.injuries = info.injuries;
+      if (info.fatigue && typeof info.fatigue === 'object') {
+        charUpdates.fatigue = {
+          value: (info.fatigue as Record<string, unknown>).value as number ?? 10,
+          level: (info.fatigue as Record<string, unknown>).level as FatigueState['level'] ?? 'normal',
+          recovery_rate: (info.fatigue as Record<string, unknown>).recovery_rate as number ?? 5,
+          accumulation_rate: (info.fatigue as Record<string, unknown>).accumulation_rate as number ?? 1,
+        };
+      }
+      if (info.mental_state && typeof info.mental_state === 'object') {
+        charUpdates.mentalState = {
+          clarity: (info.mental_state as Record<string, unknown>).clarity as number ?? 70,
+          mood: (info.mental_state as Record<string, unknown>).mood as string ?? 'calm',
+          dao_heart: (info.mental_state as Record<string, unknown>).dao_heart as number ?? 60,
+        };
+      }
       if (info.spirit_stones && typeof info.spirit_stones === 'object') {
         charUpdates.spiritStones = {
           low: (info.spirit_stones as Record<string, unknown>).low as number ?? 0,

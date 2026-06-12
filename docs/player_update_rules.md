@@ -96,3 +96,67 @@ update_character_status(
 ```
 
 创建后，该动作类型会被保存到数据库，下次可直接使用其 `action_id`。
+
+## 扩展状态维度
+
+### techniques (功法列表)
+- 类型：数组，每项含 id/name/type/level/effect
+- 更新方式：通过 `update_character_status` 工具
+- 验证规则：单次增减不超过 2 个
+- 示例：`{"techniques": [{"id": "t1", "name": "太乙真经", "type": "cultivation", "level": 3, "effect": {"time_reduction": 0.1}}]}`
+
+### active_buffs (增益/减益状态)
+- 类型：数组，每项含 id/name/type/category/effect/duration_minutes/remaining_minutes/applied_at/stackable
+- 更新方式：通过 `update_character_status` 工具添加新 buff；过期由状态引擎自动处理
+- 验证规则：单次增减不超过 3 个
+- duration_minutes 为 -1 表示永久效果
+- 示例：`{"active_buffs": [{"id": "b1", "name": "聚灵丹效果", "type": "buff", "category": "pill", "effect": {"mana_recovery": 0.1}, "duration_minutes": 120, "remaining_minutes": 120, "applied_at": "甲子年三月初五", "stackable": false}]}`
+
+### titles (称号列表)
+- 类型：数组，每项含 id/name/desc/source/acquired_at/is_equipped
+- 更新方式：通过 `update_character_status` 工具
+- 验证规则：单次增减不超过 2 个
+- 示例：`{"titles": [{"id": "tl1", "name": "青云新秀", "desc": "青云宗年度新弟子考核第一名", "source": "青云宗考核", "acquired_at": "甲子年三月初一", "is_equipped": true}]}`
+
+### injuries (伤势列表)
+- 类型：数组，每项含 id/name/severity/body_part/health_penalty/mana_penalty/spirit_penalty/recovery_minutes/remaining_minutes/caused_at/cause
+- 更新方式：通过 `update_character_status` 工具添加新伤势；恢复由状态引擎自动处理
+- 验证规则：单次增减不超过 3 个
+- severity 取值：light(轻伤)/medium(中伤)/heavy(重伤)/critical(危重)
+- 伤势惩罚不直接修改 max_health/max_mana/max_spirit，而是独立存储，前端展示时计算有效上限
+- 示例：`{"injuries": [{"id": "i1", "name": "左臂剑伤", "severity": "medium", "body_part": "左臂", "health_penalty": 150, "mana_penalty": 50, "spirit_penalty": 25, "recovery_minutes": 480, "remaining_minutes": 480, "caused_at": "甲子年三月初五", "cause": "与妖兽搏斗"}]}`
+
+### fatigue (疲劳度)
+- 类型：对象，含 value/level/recovery_rate/accumulation_rate
+- 更新方式：状态引擎自动计算累积与恢复；GM 可通过 `update_character_status` 手动调整
+- 验证规则：value 范围 0-100，单次变化不超过 30
+- level 自动根据 value 计算：refreshed(0-10)/normal(11-30)/tired(31-60)/exhausted(61-85)/collapsed(86-100)
+- 疲劳影响：高疲劳降低修炼效率、战斗能力
+- 示例：`{"fatigue": {"value": 35, "level": "tired", "recovery_rate": 5, "accumulation_rate": 3}}`
+
+### mental_state (心神状态)
+- 类型：对象，含 clarity/mood/dao_heart
+- 更新方式：状态引擎自动计算缓慢变化；GM 可通过 `update_character_status` 手动调整重大事件影响
+- 验证规则：clarity/dao_heart 范围 0-100，单次变化不超过 20
+- clarity：清明度，影响修炼效率和突破成功率
+- mood：情绪状态，取值 calm(平静)/focused(专注)/anxious(焦虑)/agitated(烦躁)/enlightened(顿悟)
+- dao_heart：道心稳固度，影响心魔抵抗和突破成功率
+- 示例：`{"mental_state": {"clarity": 75, "mood": "calm", "dao_heart": 60}}`
+
+## 状态引擎自动处理规则
+
+以下状态变化由状态引擎自动处理，GM 无需手动更新：
+
+| 状态变化 | 触发条件 | 效果 |
+|---------|---------|------|
+| 生命自然恢复 | 非战斗、无重伤 | max_health × 2%/游戏小时 |
+| 法力自然恢复 | 非施法中 | max_mana × 5%/游戏小时 |
+| 神识自然恢复 | 非消耗神识中 | max_spirit × 3%/游戏小时 |
+| 疲劳累积 | 根据行为类型 | 1-15/游戏小时 |
+| 疲劳恢复 | 休息/睡眠 | 5-15/游戏小时 |
+| Buff 过期 | remaining_minutes 耗尽 | 自动移除 |
+| 伤势恢复 | remaining_minutes 耗尽 | 自动移除 |
+| 心神清明恢复 | 平静环境 | +3/游戏小时 |
+| 道心缓慢稳固 | 自然恢复 | +1/游戏小时 |
+| 灵潮加成 | 灵潮期间修炼 | 额外法力恢复 |
+| 恶劣天气 | 暴风雨/雷暴等 | 疲劳额外 +1/游戏小时 |

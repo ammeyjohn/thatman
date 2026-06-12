@@ -549,12 +549,12 @@
     },
     {
       "name": "character_status",
-      "description": "角色核心属性状态更新技能，带验证限制。所有核心属性（境界、等级、生命值、法力值、神识值、装备、背包）的修改必须通过此技能完成，技能内部会对新旧状态进行比对验证，拒绝不合理的状态更新",
+      "description": "角色核心属性状态更新技能，带验证限制。所有核心属性（境界、等级、生命值、法力值、神识值、装备、背包、功法、增益/减益状态、称号、伤势、疲劳度、心神状态）的修改必须通过此技能完成，技能内部会对新旧状态进行比对验证，拒绝不合理的状态更新",
       "module": "skills.character_status_skill",
       "category": "character",
       "functions": {
         "update_character_status": {
-          "description": "更新角色核心属性状态（带验证限制）。核心属性包括：realm(境界)、realm_stage(境界阶段)、level(等级)、health/max_health(生命值)、mana/max_mana(法力值)、spirit/max_spirit(神识值)、equipment(装备)、inventory(背包)。验证规则：境界只能升一级、阶段只能升一级、等级单次增幅不超过10、属性上限变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种",
+          "description": "更新角色核心属性状态（带验证限制）。核心属性包括：realm(境界)、realm_stage(境界阶段)、level(等级)、health/max_health(生命值)、mana/max_mana(法力值)、spirit/max_spirit(神识值)、equipment(装备)、inventory(背包)、techniques(功法)、active_buffs(增益/减益状态)、titles(称号)、injuries(伤势)、fatigue(疲劳度)、mental_state(心神状态)。验证规则：境界只能升一级、阶段只能升一级、等级单次增幅不超过10、属性上限变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种、功法增减不超过2个、buff增减不超过3个、称号增减不超过2个、伤势增减不超过3个、疲劳度单次变化不超过30、心神状态单次变化不超过20",
           "params": {
             "uid": {"type": "string", "description": "玩家唯一标识", "required": true},
             "updates": {"type": "object", "description": "待更新的状态字段字典，仅包含需要更新的核心属性字段", "required": true}
@@ -567,14 +567,14 @@
           "type": "function",
           "function": {
             "name": "update_character_status",
-            "description": "更新角色核心属性状态（带验证限制）。当需要修改角色的境界、境界阶段、等级、生命值、法力值、神识值、装备、背包等核心属性时，必须使用此工具。工具会验证状态变更的合理性，拒绝不合理的更新（如境界跳跃、等级暴增等）。验证规则：境界只能升一级、境界阶段只能升一级（突破时重置为初期）、等级单次增幅不超过10、当前属性值不能超过上限、属性上限普通变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种",
+            "description": "更新角色核心属性状态（带验证限制）。当需要修改角色的境界、境界阶段、等级、生命值、法力值、神识值、装备、背包、功法、增益/减益状态、称号、伤势、疲劳度、心神状态等核心属性时，必须使用此工具。工具会验证状态变更的合理性，拒绝不合理的更新（如境界跳跃、等级暴增等）。验证规则：境界只能升一级、境界阶段只能升一级（突破时重置为初期）、等级单次增幅不超过10、当前属性值不能超过上限、属性上限普通变化不超过50%（突破时不超过200%）、装备增减不超过3件、背包物品种类增减不超过5种、功法增减不超过2个、buff增减不超过3个、称号增减不超过2个、伤势增减不超过3个、疲劳度单次变化不超过30、心神状态单次变化不超过20",
             "parameters": {
               "type": "object",
               "properties": {
                 "uid": {"type": "string", "description": "玩家唯一标识"},
                 "updates": {
                   "type": "object",
-                  "description": "待更新的核心属性字段字典，仅包含需要更新的字段。支持的字段：realm(境界名称，如'炼气期')、realm_stage(境界阶段，'初期'/'中期'/'后期'/'巅峰'/'圆满')、level(等级，数字)、health(当前生命值)、max_health(最大生命值)、mana(当前法力值)、max_mana(最大法力值)、spirit(当前神识值)、max_spirit(最大神识值)、equipment(装备列表)、inventory(背包物品列表)",
+                  "description": "待更新的核心属性字段字典，仅包含需要更新的字段。支持的字段：realm(境界名称)、realm_stage(境界阶段)、level(等级)、health/max_health(生命值)、mana/max_mana(法力值)、spirit/max_spirit(神识值)、equipment(装备列表)、inventory(背包物品列表)、techniques(功法列表)、active_buffs(增益/减益状态列表)、titles(称号列表)、injuries(伤势列表)、fatigue(疲劳度对象)、mental_state(心神状态对象)",
                   "properties": {
                     "realm": {"type": "string", "description": "境界名称，如'引气入体'、'炼气期'、'筑基期'等"},
                     "realm_stage": {"type": "string", "description": "境界阶段：初期/中期/后期/巅峰/圆满"},
@@ -586,7 +586,35 @@
                     "spirit": {"type": "integer", "description": "当前神识值"},
                     "max_spirit": {"type": "integer", "description": "最大神识值"},
                     "equipment": {"type": "array", "description": "装备列表", "items": {"type": "object"}},
-                    "inventory": {"type": "array", "description": "背包物品列表", "items": {"type": "object"}}
+                    "inventory": {"type": "array", "description": "背包物品列表", "items": {"type": "object"}},
+                    "techniques": {
+                      "type": "array",
+                      "description": "功法列表，每项含id/name/type(cultivation|combat|auxiliary)/level/effect",
+                      "items": {"type": "object"}
+                    },
+                    "active_buffs": {
+                      "type": "array",
+                      "description": "增益/减益状态列表，每项含id/name/type(buff|debuff)/category(pill|technique|environment|injury)/effect/duration_minutes/remaining_minutes/applied_at/stackable",
+                      "items": {"type": "object"}
+                    },
+                    "titles": {
+                      "type": "array",
+                      "description": "称号列表，每项含id/name/desc/source/acquired_at/is_equipped",
+                      "items": {"type": "object"}
+                    },
+                    "injuries": {
+                      "type": "array",
+                      "description": "伤势列表，每项含id/name/severity(light|medium|heavy|critical)/body_part/health_penalty/mana_penalty/spirit_penalty/recovery_minutes/remaining_minutes/caused_at/cause",
+                      "items": {"type": "object"}
+                    },
+                    "fatigue": {
+                      "type": "object",
+                      "description": "疲劳度对象，含value(0-100)/level(refreshed|normal|tired|exhausted|collapsed)/recovery_rate/accumulation_rate"
+                    },
+                    "mental_state": {
+                      "type": "object",
+                      "description": "心神状态对象，含clarity(0-100清明度)/mood(calm|focused|anxious|agitated|enlightened)/dao_heart(0-100道心稳固度)"
+                    }
                   }
                 }
               },

@@ -25,7 +25,8 @@ def update_character_status(
     更新角色核心属性状态（带验证限制）
 
     核心属性包括：realm、realm_stage、level、health、max_health、
-    mana、max_mana、spirit、max_spirit、equipment、inventory。
+    mana、max_mana、spirit、max_spirit、equipment、inventory、
+    techniques、active_buffs、titles、injuries、fatigue、mental_state。
     所有核心属性的修改必须通过此函数完成，函数内部会对新旧状态
     进行比对验证，拒绝不合理的状态更新（如等级跳跃、境界跨级等）。
 
@@ -44,6 +45,12 @@ def update_character_status(
             - max_spirit: 最大神识值
             - equipment: 装备列表
             - inventory: 背包物品列表
+            - techniques: 功法列表，每项含 id/name/type/level/effect
+            - active_buffs: 增益/减益状态列表，每项含 id/name/type/category/effect/duration_minutes/remaining_minutes/applied_at/stackable
+            - titles: 称号列表，每项含 id/name/desc/source/acquired_at/is_equipped
+            - injuries: 伤势列表，每项含 id/name/severity/body_part/health_penalty/mana_penalty/spirit_penalty/recovery_minutes/remaining_minutes/caused_at/cause
+            - fatigue: 疲劳度对象，含 value/level/recovery_rate/accumulation_rate
+            - mental_state: 心神状态对象，含 clarity/mood/dao_heart
         storage: GMStorage 实例（由 gm_tools 传入）
 
     Returns:

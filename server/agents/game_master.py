@@ -609,6 +609,45 @@ class GameMaster:
             else:
                 debug_log(f"[handle_chat] Step5 跳过耗时处理: time_cost={time_cost}")
 
+            # 5.5 状态引擎：自动计算状态变化（自然恢复、疲劳累积、Buff过期、伤势恢复等）
+            if self.storage and time_cost and time_cost > 0:
+                try:
+                    from state_engine import get_state_engine
+                    engine = get_state_engine()
+                    player_data = self.storage.couch_get_player(uid) if self.storage else {}
+                    if player_data:
+                        # 判断是否战斗中
+                        is_combat = action_id == "combat"
+                        # 判断是否休息中
+                        is_resting = action_id == "rest"
+                        # 获取天气信息
+                        weather_info = self._get_weather_info()
+                        state_context = {
+                            "time_cost": time_cost,
+                            "action_id": action_id,
+                            "weather": weather_info.get("weather", ""),
+                            "spirit_tide": weather_info.get("spirit_tide", False),
+                            "spirit_tide_intensity": weather_info.get("spirit_tide_intensity", 0),
+                            "is_combat": is_combat,
+                            "is_resting": is_resting,
+                        }
+                        state_changes = engine.process(uid, player_data, state_context)
+                        if state_changes:
+                            # 将引擎产生的状态变更合并到 player_update
+                            if not player_update:
+                                player_update = {}
+                            # 核心属性字段需要通过验证，合并到 player_update 中
+                            # 验证器会在 _sanitize_player_update 中处理
+                            player_update.update(state_changes)
+                            resp_json["player_update"] = player_update
+                            # 如果没有 save_flag，强制设为 player_update
+                            if not save_flag:
+                                save_flag = "player_update"
+                                resp_json["save_flag"] = save_flag
+                            debug_log(f"[handle_chat] Step5.5 状态引擎变更: {list(state_changes.keys())}")
+                except Exception as e:
+                    error_log(f"[handle_chat] Step5.5 状态引擎异常: uid={uid}, 错误: {e}")
+
             # 6. 落库分发
             # 角色状态变更强制保存：player_update 非空时始终保存到数据库
             if self.storage and save_flag:
@@ -955,6 +994,7 @@ class GameMaster:
         "current_location", "current_status", "clothing",
         "birth_date", "lifespan",
         "equipment", "inventory",
+        "techniques", "active_buffs", "titles", "injuries", "fatigue", "mental_state",
     ]
 
     # 字段中文标签映射
@@ -976,6 +1016,12 @@ class GameMaster:
         "lifespan": "寿元",
         "equipment": "装备",
         "inventory": "储物袋",
+        "techniques": "功法",
+        "active_buffs": "状态效果",
+        "titles": "称号",
+        "injuries": "伤势",
+        "fatigue": "疲劳度",
+        "mental_state": "心神状态",
     }
 
     # 需要排除的 CouchDB 内部字段
@@ -1046,6 +1092,74 @@ class GameMaster:
             elif field in ("max_health", "max_mana", "max_spirit"):
                 # 已在 health/mana/spirit 中合并输出，跳过
                 continue
+            elif field == "techniques" and isinstance(value, list):
+                # 功法列表
+                tech_parts = []
+                for tech in value:
+                    if isinstance(tech, dict):
+                        tech_name = tech.get("name", str(tech))
+                        tech_level = tech.get("level", "")
+                        if tech_level:
+                            tech_parts.append(f"{tech_name}(第{tech_level}层)")
+                        else:
+                            tech_parts.append(tech_name)
+                    else:
+                        tech_parts.append(str(tech))
+                lines.append(f"{label}：{', '.join(tech_parts) if tech_parts else '无'}")
+            elif field == "active_buffs" and isinstance(value, list):
+                # 状态效果列表
+                buff_parts = []
+                for buff in value:
+                    if isinstance(buff, dict):
+                        buff_name = buff.get("name", str(buff))
+                        buff_type = "增" if buff.get("type") == "buff" else "减"
+                        remaining = buff.get("remaining_minutes", -1)
+                        if remaining > 0:
+                            buff_parts.append(f"[{buff_type}]{buff_name}({remaining}分钟)")
+                        else:
+                            buff_parts.append(f"[{buff_type}]{buff_name}")
+                    else:
+                        buff_parts.append(str(buff))
+                lines.append(f"{label}：{', '.join(buff_parts) if buff_parts else '无'}")
+            elif field == "titles" and isinstance(value, list):
+                # 称号列表
+                title_parts = []
+                for title in value:
+                    if isinstance(title, dict):
+                        title_name = title.get("name", str(title))
+                        equipped = "★" if title.get("is_equipped") else ""
+                        title_parts.append(f"{equipped}{title_name}")
+                    else:
+                        title_parts.append(str(title))
+                lines.append(f"{label}：{', '.join(title_parts) if title_parts else '无'}")
+            elif field == "injuries" and isinstance(value, list):
+                # 伤势列表
+                injury_parts = []
+                for injury in value:
+                    if isinstance(injury, dict):
+                        inj_name = injury.get("name", str(injury))
+                        severity = injury.get("severity", "")
+                        severity_map = {"light": "轻", "medium": "中", "heavy": "重", "critical": "危"}
+                        sev_text = severity_map.get(severity, severity)
+                        injury_parts.append(f"{inj_name}[{sev_text}]")
+                    else:
+                        injury_parts.append(str(injury))
+                lines.append(f"{label}：{', '.join(injury_parts) if injury_parts else '无'}")
+            elif field == "fatigue" and isinstance(value, dict):
+                # 疲劳度
+                fatigue_val = value.get("value", 0)
+                fatigue_level = value.get("level", "normal")
+                level_map = {"refreshed": "精力充沛", "normal": "正常", "tired": "疲倦", "exhausted": "精疲力竭", "collapsed": "虚脱"}
+                level_text = level_map.get(fatigue_level, fatigue_level)
+                lines.append(f"{label}：{fatigue_val}/100({level_text})")
+            elif field == "mental_state" and isinstance(value, dict):
+                # 心神状态
+                clarity = value.get("clarity", 0)
+                mood = value.get("mood", "calm")
+                dao_heart = value.get("dao_heart", 0)
+                mood_map = {"calm": "平静", "focused": "专注", "anxious": "焦虑", "agitated": "烦躁", "enlightened": "顿悟"}
+                mood_text = mood_map.get(mood, mood)
+                lines.append(f"{label}：清明{clarity}/100, 心情{mood_text}, 道心{dao_heart}/100")
             else:
                 lines.append(f"{label}：{value}")
 

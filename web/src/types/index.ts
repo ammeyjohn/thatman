@@ -23,6 +23,12 @@ export interface CharacterState {
   karma: number;
   karmaLevel: number;
   karmaTitle: string;
+  techniques: Technique[];
+  activeBuffs: Buff[];
+  titles: Title[];
+  injuries: Injury[];
+  fatigue: FatigueState;
+  mentalState: MentalState;
   spiritStones: SpiritStones;
 }
 
@@ -296,6 +302,68 @@ export interface KarmaBond {
   bondDesc: string;
   totalKarma: number;
   resolved: boolean;
+}
+
+// 功法
+export interface Technique {
+  id: string;
+  name: string;
+  type: string;         // cultivation(修炼)/combat(战斗)/auxiliary(辅助)
+  level: number;        // 修炼层数/境界
+  effect: Record<string, unknown>;  // 效果描述
+}
+
+// 增益/减益状态
+export interface Buff {
+  id: string;
+  name: string;
+  type: 'buff' | 'debuff';
+  category: string;     // pill(丹药)/technique(功法)/environment(环境)/injury(伤势)
+  effect: Record<string, unknown>;
+  duration_minutes: number;  // 持续时间（游戏分钟），-1表示永久
+  remaining_minutes: number; // 剩余时间
+  applied_at: string;   // 生效时间（游戏日期）
+  stackable: boolean;   // 是否可叠加
+}
+
+// 称号
+export interface Title {
+  id: string;
+  name: string;
+  desc: string;
+  source: string;       // 获得来源
+  acquired_at: string;  // 获得时间（游戏日期）
+  is_equipped: boolean; // 是否装备中
+}
+
+// 伤势
+export interface Injury {
+  id: string;
+  name: string;
+  severity: 'light' | 'medium' | 'heavy' | 'critical';
+  body_part: string;
+  health_penalty: number;
+  mana_penalty: number;
+  spirit_penalty: number;
+  recovery_minutes: number;
+  remaining_minutes: number;
+  caused_at: string;
+  cause: string;
+}
+
+// 疲劳度
+export interface FatigueState {
+  value: number;        // 疲劳值 0-100
+  level: 'refreshed' | 'normal' | 'tired' | 'exhausted' | 'collapsed';
+  recovery_rate: number;
+  accumulation_rate: number;
+}
+
+// 心神状态
+export interface MentalState {
+  clarity: number;      // 清明度 0-100
+  mood: string;         // calm/focused/anxious/agitated/enlightened
+  dao_heart: number;    // 道心稳固度 0-100
 }
 
 // 灵石
