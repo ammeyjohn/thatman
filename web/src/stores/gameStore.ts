@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond, OnlinePlayer } from '../types';
+import type { CharacterState, WorldState, ActionState, TimeAdvanceInfo, KeyEvent, CharacterHistory, NearbyCharacter, KarmaRecord, KarmaBond, OnlinePlayer, SpiritStones, Stall } from '../types';
 import { config } from '../config';
 import { getOrCreateUserId, getAuthHeaders } from '../lib/user';
 
@@ -84,6 +84,16 @@ interface GameState {
   _stopHeartbeat: () => void;
   sendHeartbeat: () => Promise<void>;
   fetchOnlinePlayers: () => Promise<void>;
+  // 灵石与摊位
+  myStall: Stall | null;
+  nearbyStalls: Stall[];
+  fetchSpiritStones: () => Promise<void>;
+  fetchMyStall: () => Promise<void>;
+  fetchNearbyStalls: () => Promise<void>;
+  createStall: (stallName: string, items: Array<{ item_id: string; name: string; type?: string; description?: string; quantity: number; price?: number }>) => Promise<void>;
+  closeMyStall: () => Promise<void>;
+  buyFromStall: (stallId: string, itemId: string, quantity: number) => Promise<void>;
+  sellToStall: (stallId: string, itemId: string, quantity: number, price?: number) => Promise<void>;
 }
 
 const initialCharacter: CharacterState = {
@@ -111,6 +121,7 @@ const initialCharacter: CharacterState = {
   karma: 0,
   karmaLevel: 3,
   karmaTitle: '因果清净',
+  spiritStones: { low: 100, medium: 0, high: 0, top: 0 },
 };
 
 const initialWorld: WorldState = {
@@ -169,6 +180,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   onlinePlayers: [],
   onlineCount: 0,
   _heartbeatInterval: null,
+  myStall: null,
+  nearbyStalls: [],
 
   updateCharacter: (updates) =>
     set((state) => ({
@@ -667,6 +680,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (typeof info.karma === 'number') charUpdates.karma = info.karma;
       if (typeof info.karma_level === 'number') charUpdates.karmaLevel = info.karma_level;
       if (typeof info.karma_title === 'string' && info.karma_title) charUpdates.karmaTitle = info.karma_title;
+      if (info.spirit_stones && typeof info.spirit_stones === 'object') {
+        charUpdates.spiritStones = {
+          low: (info.spirit_stones as Record<string, unknown>).low as number ?? 0,
+          medium: (info.spirit_stones as Record<string, unknown>).medium as number ?? 0,
+          high: (info.spirit_stones as Record<string, unknown>).high as number ?? 0,
+          top: (info.spirit_stones as Record<string, unknown>).top as number ?? 0,
+        };
+      }
 
       if (Object.keys(charUpdates).length > 0) {
         set((state) => ({
@@ -720,6 +741,11 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       // 加载在线玩家
       useGameStore.getState().fetchOnlinePlayers();
+
+      // 加载灵石和摊位数据
+      useGameStore.getState().fetchSpiritStones();
+      useGameStore.getState().fetchMyStall();
+      useGameStore.getState().fetchNearbyStalls();
     } catch (error) {
       console.error('加载用户信息失败:', error);
     }
@@ -1156,6 +1182,11 @@ export const useGameStore = create<GameState>((set, get) => ({
           desc: (c.desc as string) || '',
           currentAction: (c.current_action as string) || (c.currentAction as string) || '',
           avatar: (c.avatar as string) || undefined,
+          uid: (c.uid as string) || undefined,
+          isOnline: (c.isOnline as boolean) || undefined,
+          hasStall: (c.hasStall as boolean) || false,
+          stallId: (c.stallId as string) || undefined,
+          stallName: (c.stallName as string) || undefined,
         }));
         set({ nearbyCharacters: characters, _lastFetchNearbyTime: Date.now() });
         console.log('[NearbyCharacters] 附近人物加载成功:', characters.length);
@@ -1283,6 +1314,178 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (error) {
       console.error('获取在线玩家失败:', error);
+    }
+  },
+
+  // ───────────────────────────────────────────────
+  // 灵石与摊位
+  // ───────────────────────────────────────────────
+
+  fetchSpiritStones: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/spirit-stones?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.spirit_stones) {
+        set((state) => ({
+          character: {
+            ...state.character,
+            spiritStones: {
+              low: data.spirit_stones.low ?? 0,
+              medium: data.spirit_stones.medium ?? 0,
+              high: data.spirit_stones.high ?? 0,
+              top: data.spirit_stones.top ?? 0,
+            },
+          },
+        }));
+      }
+    } catch (error) {
+      console.error('[SpiritStones] 获取灵石余额失败:', error);
+    }
+  },
+
+  fetchMyStall: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/stall?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      set({ myStall: data.stall || null });
+    } catch (error) {
+      console.error('[Stall] 获取我的摊位失败:', error);
+    }
+  },
+
+  fetchNearbyStalls: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/stalls?uid=${encodeURIComponent(uid)}`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.stalls)) {
+        const stalls: Stall[] = data.stalls.map((s: Record<string, unknown>) => ({
+          stallId: (s.stall_id as string) || '',
+          ownerUid: (s.owner_uid as string) || '',
+          ownerName: (s.owner_name as string) || '',
+          ownerType: (s.owner_type as 'player' | 'npc') || 'npc',
+          stallName: (s.stall_name as string) || '',
+          location: (s.location as string) || '',
+          items: (Array.isArray(s.items) ? s.items : []).map((i: Record<string, unknown>) => ({
+            itemId: (i.item_id as string) || '',
+            name: (i.name as string) || '',
+            type: (i.type as string) || '',
+            description: (i.description as string) || '',
+            quantity: (i.quantity as number) || 0,
+            price: (i.price as number) || 0,
+            isCustomPrice: (i.is_custom_price as boolean) || false,
+            grade: (i.grade as string) || undefined,
+          })),
+          status: (s.status as 'open' | 'closed') || 'closed',
+          createdAt: (s.created_at as number) || 0,
+          updatedAt: (s.updated_at as number) || 0,
+        }));
+        set({ nearbyStalls: stalls });
+      }
+    } catch (error) {
+      console.error('[Stall] 获取附近摊位失败:', error);
+    }
+  },
+
+  createStall: async (stallName, items) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/stall`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ uid, stall_name: stallName, items }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        console.error('[Stall] 创建摊位失败:', data.error?.message);
+        return;
+      }
+      // 刷新摊位和背包数据
+      const { fetchMyStall, fetchInventory } = useGameStore.getState();
+      await fetchMyStall();
+      await fetchInventory();
+    } catch (error) {
+      console.error('[Stall] 创建摊位失败:', error);
+    }
+  },
+
+  closeMyStall: async () => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/stall`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ uid }),
+      });
+      if (!response.ok) return;
+      set({ myStall: null });
+      // 刷新背包数据
+      const { fetchInventory } = useGameStore.getState();
+      await fetchInventory();
+    } catch (error) {
+      console.error('[Stall] 关闭摊位失败:', error);
+    }
+  },
+
+  buyFromStall: async (stallId, itemId, quantity) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const response = await fetch(`${config.API_BASE_URL}/market/trade/buy`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ uid, stall_id: stallId, item_id: itemId, quantity }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        console.error('[Trade] 购买失败:', data.error?.message);
+        return;
+      }
+      // 刷新灵石、背包、摊位数据
+      const { fetchSpiritStones, fetchInventory, fetchMyStall, fetchNearbyStalls } = useGameStore.getState();
+      await Promise.all([fetchSpiritStones(), fetchInventory(), fetchMyStall(), fetchNearbyStalls()]);
+    } catch (error) {
+      console.error('[Trade] 购买失败:', error);
+    }
+  },
+
+  sellToStall: async (stallId, itemId, quantity, price) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+    try {
+      const body: Record<string, unknown> = { uid, stall_id: stallId, item_id: itemId, quantity };
+      if (price !== undefined) body.price = price;
+      const response = await fetch(`${config.API_BASE_URL}/market/trade/sell`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        console.error('[Trade] 出售失败:', data.error?.message);
+        return;
+      }
+      // 刷新灵石、背包、摊位数据
+      const { fetchSpiritStones, fetchInventory, fetchMyStall, fetchNearbyStalls } = useGameStore.getState();
+      await Promise.all([fetchSpiritStones(), fetchInventory(), fetchMyStall(), fetchNearbyStalls()]);
+    } catch (error) {
+      console.error('[Trade] 出售失败:', error);
     }
   },
 }));

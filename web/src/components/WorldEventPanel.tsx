@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useGameStore } from '../stores/gameStore';
-import { MapPin, Clock, Users } from 'lucide-react';
+import { MapPin, Clock, Users, Store } from 'lucide-react';
 import { CharacterList } from './CharacterList';
+import { TradeDialog } from './TradeDialog';
+import { StallDialog } from './StallDialog';
 
 type TabType = 'events' | 'characters';
 
@@ -10,6 +12,20 @@ export function WorldEventPanel() {
   const layoutRef = React.useRef<HTMLDivElement>(null);
   const scriptsRef = React.useRef<string[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>('events');
+
+  // 交易对话框状态
+  const [tradeDialogOpen, setTradeDialogOpen] = useState(false);
+  const [tradeStallId, setTradeStallId] = useState('');
+  const [tradeOwnerName, setTradeOwnerName] = useState('');
+
+  // 摆摊对话框状态
+  const [stallDialogOpen, setStallDialogOpen] = useState(false);
+
+  const handleTrade = (stallId: string, ownerName: string) => {
+    setTradeStallId(stallId);
+    setTradeOwnerName(ownerName);
+    setTradeDialogOpen(true);
+  };
 
   // 注入实时数据并执行布局中的脚本
   React.useEffect(() => {
@@ -160,10 +176,37 @@ export function WorldEventPanel() {
           )}
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
-          <CharacterList />
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+            <CharacterList onTrade={handleTrade} />
+          </div>
+          {/* 摆摊按钮 */}
+          <div className="p-3 border-t border-[#2d5a5a]/30">
+            <button
+              onClick={() => setStallDialogOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg bg-[#4ECDC4]/10 text-[#4ECDC4] border border-[#4ECDC4]/30 hover:bg-[#4ECDC4]/20 transition-colors duration-200 cursor-pointer"
+              style={{ fontFamily: 'Noto Serif SC, serif' }}
+            >
+              <Store className="w-3.5 h-3.5" />
+              <span>摆摊</span>
+            </button>
+          </div>
         </div>
       )}
+
+      {/* 交易对话框 */}
+      <TradeDialog
+        open={tradeDialogOpen}
+        onClose={() => setTradeDialogOpen(false)}
+        stallId={tradeStallId}
+        ownerName={tradeOwnerName}
+      />
+
+      {/* 摆摊对话框 */}
+      <StallDialog
+        open={stallDialogOpen}
+        onClose={() => setStallDialogOpen(false)}
+      />
     </div>
   );
 }

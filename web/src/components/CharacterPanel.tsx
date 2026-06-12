@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User, Scale } from 'lucide-react';
+import { Sparkles, MapPin, Activity, TrendingUp, Clock, Shirt, MoreHorizontal, LogOut, Settings, User, Scale, Gem } from 'lucide-react';
 import { KarmaDialog } from './KarmaDialog';
 
 export function CharacterPanel() {
@@ -226,6 +226,45 @@ export function CharacterPanel() {
                 <p className="text-[#e8e4dc] text-sm pl-6" style={{ fontFamily: 'Noto Serif SC, serif' }}>
                   {character.karmaTitle}
                 </p>
+              </div>
+            )}
+
+            {/* Spirit Stones */}
+            {character.spiritStones && (
+              <div className="mb-4 p-3 bg-[#1a2f2f]/50 rounded-lg border border-[#2d5a5a]/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <Gem className="w-4 h-4 text-[#4ECDC4]" />
+                  <span className="text-[#4ECDC4] text-xs font-medium">灵石</span>
+                </div>
+                <div className="pl-6 space-y-1">
+                  {character.spiritStones.low > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#7F8C8D]" style={{ fontFamily: 'Noto Serif SC, serif' }}>下品灵石</span>
+                      <span className="text-xs text-[#e8e4dc] font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>{character.spiritStones.low}</span>
+                    </div>
+                  )}
+                  {character.spiritStones.medium > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#7F8C8D]" style={{ fontFamily: 'Noto Serif SC, serif' }}>中品灵石</span>
+                      <span className="text-xs text-[#5ab8b8] font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>{character.spiritStones.medium}</span>
+                    </div>
+                  )}
+                  {character.spiritStones.high > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#7F8C8D]" style={{ fontFamily: 'Noto Serif SC, serif' }}>上品灵石</span>
+                      <span className="text-xs text-[#c9a227] font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>{character.spiritStones.high}</span>
+                    </div>
+                  )}
+                  {character.spiritStones.top > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#7F8C8D]" style={{ fontFamily: 'Noto Serif SC, serif' }}>极品灵石</span>
+                      <span className="text-xs text-[#E74C3C] font-medium" style={{ fontFamily: 'Noto Serif SC, serif' }}>{character.spiritStones.top}</span>
+                    </div>
+                  )}
+                  {character.spiritStones.low === 0 && character.spiritStones.medium === 0 && character.spiritStones.high === 0 && character.spiritStones.top === 0 && (
+                    <p className="text-xs text-[#7F8C8D]" style={{ fontFamily: 'Noto Serif SC, serif' }}>身无分文</p>
+                  )}
+                </div>
               </div>
             )}
           </>

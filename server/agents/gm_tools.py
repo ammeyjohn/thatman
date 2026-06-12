@@ -306,6 +306,78 @@ def match_and_execute_tool(tool_name: str, tool_args: Dict[str, Any], storage) -
             result = _resolve_karma(uid=uid, target_id=target_id, resolution_type=resolution_type, storage=storage)
             return json.dumps(result, ensure_ascii=False)
 
+        # ---- 坊市摊位操作 ----
+        if tool_name == "create_npc_stall":
+            from stall_manager import get_stall_manager
+            mgr = get_stall_manager()
+            if not mgr._storage:
+                mgr.set_storage(storage)
+            npc_id = tool_args.get("npc_id", "")
+            npc_name = tool_args.get("npc_name", "")
+            location = tool_args.get("location", "")
+            stall_name = tool_args.get("stall_name", "")
+            items = tool_args.get("items", [])
+            if not npc_id:
+                return json.dumps({"error": "npc_id 不能为空"}, ensure_ascii=False)
+            if not npc_name:
+                return json.dumps({"error": "npc_name 不能为空"}, ensure_ascii=False)
+            if not location:
+                return json.dumps({"error": "location 不能为空"}, ensure_ascii=False)
+            if not stall_name:
+                return json.dumps({"error": "stall_name 不能为空"}, ensure_ascii=False)
+            if not items:
+                return json.dumps({"error": "items 不能为空"}, ensure_ascii=False)
+            result = mgr.create_npc_stall(npc_id, npc_name, location, stall_name, items)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "update_npc_stall":
+            from stall_manager import get_stall_manager
+            mgr = get_stall_manager()
+            if not mgr._storage:
+                mgr.set_storage(storage)
+            npc_id = tool_args.get("npc_id", "")
+            items = tool_args.get("items", [])
+            if not npc_id:
+                return json.dumps({"error": "npc_id 不能为空"}, ensure_ascii=False)
+            stall = mgr.get_stall_by_owner(npc_id)
+            if not stall:
+                return json.dumps({"error": "NPC没有进行中的摊位"}, ensure_ascii=False)
+            # 关闭旧摊位并创建新的
+            mgr.close_stall(npc_id)
+            result = mgr.create_npc_stall(
+                npc_id, stall.get("owner_name", npc_id),
+                stall.get("location", ""), stall.get("stall_name", ""),
+                items
+            )
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "close_npc_stall":
+            from stall_manager import get_stall_manager
+            mgr = get_stall_manager()
+            if not mgr._storage:
+                mgr.set_storage(storage)
+            npc_id = tool_args.get("npc_id", "")
+            if not npc_id:
+                return json.dumps({"error": "npc_id 不能为空"}, ensure_ascii=False)
+            result = mgr.close_stall(npc_id)
+            return json.dumps(result, ensure_ascii=False)
+
+        if tool_name == "get_item_average_price":
+            from price_manager import get_price_manager
+            price_mgr = get_price_manager()
+            name = tool_args.get("name", "")
+            item_type = tool_args.get("type", "其他")
+            grade = tool_args.get("grade", "凡品")
+            if not name:
+                return json.dumps({"error": "name 不能为空"}, ensure_ascii=False)
+            price = price_mgr.get_average_price(name=name, item_type=item_type, grade=grade)
+            return json.dumps({
+                "price": price,
+                "name": name,
+                "type": item_type,
+                "grade": grade,
+            }, ensure_ascii=False)
+
         # 未知工具
         warn_log(f"未知工具名称: {tool_name}")
         return json.dumps({"error": f"未知工具: {tool_name}"}, ensure_ascii=False)

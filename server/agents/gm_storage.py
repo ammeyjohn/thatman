@@ -220,6 +220,7 @@ class GMStorage:
         self._db_private_messages: str = f"{self._couch_db_prefix}private_messages"
         self._db_area_messages: str = f"{self._couch_db_prefix}area_messages"
         self._db_teams: str = f"{self._couch_db_prefix}teams"
+        self._db_stalls: str = f"{self._couch_db_prefix}stalls"
 
         # 初始化 CouchDB httpx 客户端（线程本地存储，避免多线程共享导致连接池损坏）
         self._couch_local = threading.local()
@@ -287,6 +288,7 @@ class GMStorage:
             self._db_private_messages,
             self._db_area_messages,
             self._db_teams,
+            self._db_stalls,
         ]
         for db_name in db_names:
             try:
@@ -305,6 +307,9 @@ class GMStorage:
 
         # 为 chat_history 创建 Mango 索引（uid + timestamp），支持排序查询
         self._ensure_chat_history_index()
+
+        # 为 stalls 创建 Mango 索引
+        self._ensure_stalls_index()
 
     def _ensure_chat_history_index(self) -> None:
         """确保 chat_history 数据库有 uid+timestamp 的 Mango 索引"""
@@ -328,6 +333,39 @@ class GMStorage:
                 warn_log(f"chat_history 升序索引创建失败: 状态码={resp.status_code}, 响应={resp.text[:200]}")
         except Exception as e:
             error_log(f"chat_history 索引创建异常: {e}")
+
+    def _ensure_stalls_index(self) -> None:
+        """确保 stalls 数据库有 Mango 索引"""
+        try:
+            # owner_uid + status 索引（查找某角色的摊位）
+            index_doc_owner = {
+                "index": {"fields": ["owner_uid", "status"]},
+                "name": "owner-uid-status-index",
+                "type": "json"
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_stalls}/_index",
+                json_data=index_doc_owner,
+            )
+            if resp.status_code in (200, 201):
+                debug_log("stalls 索引创建/已存在: owner-uid-status-index")
+
+            # location + status 索引（查找某位置的摊位）
+            index_doc_location = {
+                "index": {"fields": ["location", "status"]},
+                "name": "location-status-index",
+                "type": "json"
+            }
+            resp = self._couch_request(
+                "POST",
+                f"/{self._db_stalls}/_index",
+                json_data=index_doc_location,
+            )
+            if resp.status_code in (200, 201):
+                debug_log("stalls 索引创建/已存在: location-status-index")
+        except Exception as e:
+            error_log(f"stalls 索引创建异常: {e}")
 
     def _couch_request(
         self,

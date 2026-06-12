@@ -815,6 +815,11 @@ def get_user_info():
         # 移除 CouchDB 内部字段
         player_data.pop('_rev', None)
         player_data.pop('_id', None)
+
+        # 确保灵石字段存在（兼容旧数据）
+        if "spirit_stones" not in player_data:
+            player_data["spirit_stones"] = {"low": 100, "medium": 0, "high": 0, "top": 0}
+
         return jsonify({
             'uid': uid,
             'exists': True,
@@ -871,6 +876,7 @@ def init_user():
                 "name": "",
                 "current_location": "",
                 "current_status": "",
+                "spirit_stones": {"low": 100, "medium": 0, "high": 0, "top": 0},
             }
             storage.couch_save_player(uid, initial_data)
             info_log(f"初始化新用户: {uid}")
@@ -2473,6 +2479,19 @@ def get_nearby_characters():
 
         # 5. 为每个角色生成 id 并格式化输出
         characters = []
+
+        # 批量查询当前位置所有摊位，避免逐个查询
+        location_stalls = {}
+        try:
+            from stall_manager import get_stall_manager
+            stall_mgr = get_stall_manager()
+            if stall_mgr._storage and current_location:
+                all_stalls = stall_mgr.get_stalls_by_location(current_location)
+                for s in all_stalls:
+                    location_stalls[s.get("owner_uid", "") or s.get("owner_name", "")] = s
+        except Exception as e:
+            error_log(f"查询位置摊位失败: {e}")
+
         for idx, char in enumerate(supplemented_characters):
             char_entry = {
                 "id": f"char_{idx}_{hash(char['name']) % 10000:04d}",
@@ -2486,6 +2505,15 @@ def get_nearby_characters():
             if char.get("uid"):
                 char_entry["uid"] = char["uid"]
                 char_entry["isOnline"] = char.get("isOnline", True)
+
+            # 摊位信息
+            owner_key = char.get("uid", "") or char.get("name", "")
+            stall_info = location_stalls.get(owner_key)
+            if stall_info:
+                char_entry["hasStall"] = True
+                char_entry["stallId"] = stall_info.get("stall_id", "")
+                char_entry["stallName"] = stall_info.get("stall_name", "")
+
             characters.append(char_entry)
 
         return jsonify({

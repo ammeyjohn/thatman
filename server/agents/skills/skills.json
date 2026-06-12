@@ -728,6 +728,146 @@
           }
         }
       ]
+    },
+    {
+      "name": "market",
+      "description": "坊市摊位管理技能，支持NPC摊位创建/更新/关闭、物品均价查询",
+      "module": "skills.market_skill",
+      "category": "market",
+      "functions": {
+        "create_npc_stall": {
+          "description": "为NPC创建坊市摊位，指定出售物品和价格",
+          "params": {
+            "npc_id": {"type": "string", "description": "NPC唯一标识", "required": true},
+            "npc_name": {"type": "string", "description": "NPC名称", "required": true},
+            "location": {"type": "string", "description": "摊位位置", "required": true},
+            "stall_name": {"type": "string", "description": "摊位名称", "required": true},
+            "items": {"type": "array", "description": "出售物品列表，每项包含 name, quantity, price(可选), type(可选), description(可选), grade(可选)", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 stall_id, owner_name, stall_name, items 的字典"
+        },
+        "update_npc_stall": {
+          "description": "更新NPC摊位的出售物品列表",
+          "params": {
+            "npc_id": {"type": "string", "description": "NPC唯一标识", "required": true},
+            "items": {"type": "array", "description": "新的出售物品列表", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 stall_id, items 的字典"
+        },
+        "close_npc_stall": {
+          "description": "关闭NPC摊位",
+          "params": {
+            "npc_id": {"type": "string", "description": "NPC唯一标识", "required": true}
+          },
+          "returns": "Dict[str, Any] - 包含 stall_id, status 的字典"
+        },
+        "get_item_average_price": {
+          "description": "查询物品世界均价，用于定价参考",
+          "params": {
+            "name": {"type": "string", "description": "物品名称", "required": true},
+            "type": {"type": "string", "description": "物品类型，如 丹药/法宝/材料 等", "required": false, "default": "其他"},
+            "grade": {"type": "string", "description": "物品品级，如 凡品/良品/上品/极品/上古品", "required": false, "default": "凡品"}
+          },
+          "returns": "Dict[str, Any] - 包含 price, name, type, grade 的字典"
+        }
+      },
+      "tool_schemas": [
+        {
+          "type": "function",
+          "function": {
+            "name": "create_npc_stall",
+            "description": "为NPC创建坊市摊位。当剧情中NPC在坊市摆摊时使用此工具，可指定出售物品和价格。不指定价格的物品将使用世界均价。每个NPC同时只能有一个摊位。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "npc_id": {"type": "string", "description": "NPC唯一标识，如 npc_changsheng"},
+                "npc_name": {"type": "string", "description": "NPC名称，如 长生药铺掌柜"},
+                "location": {"type": "string", "description": "摊位位置，如 云溪村坊市"},
+                "stall_name": {"type": "string", "description": "摊位名称，如 长生药铺"},
+                "items": {
+                  "type": "array",
+                  "description": "出售物品列表",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "item_id": {"type": "string", "description": "物品ID"},
+                      "name": {"type": "string", "description": "物品名称"},
+                      "type": {"type": "string", "description": "物品类型，如 丹药/法宝/材料"},
+                      "description": {"type": "string", "description": "物品描述"},
+                      "grade": {"type": "string", "description": "物品品级：凡品/良品/上品/极品/上古品"},
+                      "quantity": {"type": "integer", "description": "出售数量"},
+                      "price": {"type": "integer", "description": "单价（下品灵石），不指定则使用世界均价"}
+                    },
+                    "required": ["name", "quantity"]
+                  }
+                }
+              },
+              "required": ["npc_id", "npc_name", "location", "stall_name", "items"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "update_npc_stall",
+            "description": "更新NPC摊位的出售物品列表，用于调整NPC的出售物品和价格",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "npc_id": {"type": "string", "description": "NPC唯一标识"},
+                "items": {
+                  "type": "array",
+                  "description": "新的出售物品列表",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "item_id": {"type": "string", "description": "物品ID"},
+                      "name": {"type": "string", "description": "物品名称"},
+                      "type": {"type": "string", "description": "物品类型"},
+                      "description": {"type": "string", "description": "物品描述"},
+                      "grade": {"type": "string", "description": "物品品级"},
+                      "quantity": {"type": "integer", "description": "出售数量"},
+                      "price": {"type": "integer", "description": "单价（下品灵石）"}
+                    },
+                    "required": ["name", "quantity"]
+                  }
+                }
+              },
+              "required": ["npc_id", "items"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "close_npc_stall",
+            "description": "关闭NPC摊位。当NPC离开坊市或剧情需要时使用。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "npc_id": {"type": "string", "description": "NPC唯一标识"}
+              },
+              "required": ["npc_id"]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "get_item_average_price",
+            "description": "查询物品世界均价（下品灵石），用于定价参考。品级基准价：凡品5、良品50、上品500、极品5000、上古品50000。类型系数：丹药×1.2、法宝×1.5、材料×0.8等。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string", "description": "物品名称"},
+                "type": {"type": "string", "description": "物品类型，如 丹药/法宝/材料/天材地宝 等"},
+                "grade": {"type": "string", "description": "物品品级：凡品/良品/上品/极品/上古品"}
+              },
+              "required": ["name"]
+            }
+          }
+        }
+      ]
     }
   ]
 }

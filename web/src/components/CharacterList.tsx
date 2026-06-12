@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useChatStore } from '../stores/chatStore';
-import { MessageCircle, Sword, Users } from 'lucide-react';
+import { MessageCircle, Sword, Users, ShoppingBag } from 'lucide-react';
 import type { NearbyCharacter } from '../types';
 
 const TYPE_CONFIG: Record<string, { label: string; emoji: string; tagColor: string }> = {
@@ -10,7 +10,12 @@ const TYPE_CONFIG: Record<string, { label: string; emoji: string; tagColor: stri
   monster: { label: '怪物', emoji: '👹', tagColor: 'bg-[#E74C3C]/20 text-[#E74C3C]' },
 };
 
-function CharacterItem({ character }: { character: NearbyCharacter }) {
+interface CharacterItemProps {
+  character: NearbyCharacter;
+  onTrade?: (stallId: string, ownerName: string) => void;
+}
+
+function CharacterItem({ character, onTrade }: CharacterItemProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
@@ -57,6 +62,13 @@ function CharacterItem({ character }: { character: NearbyCharacter }) {
     setShowMenu(false);
   };
 
+  const handleTrade = () => {
+    if (character.stallId && onTrade) {
+      onTrade(character.stallId, character.name);
+    }
+    setShowMenu(false);
+  };
+
   return (
     <div
       ref={itemRef}
@@ -70,6 +82,12 @@ function CharacterItem({ character }: { character: NearbyCharacter }) {
         <span className="text-[#e8e4dc] text-sm font-medium flex-1 truncate" style={{ fontFamily: 'Noto Serif SC, serif' }}>
           {character.name}
         </span>
+        {/* 摊位标识 */}
+        {character.hasStall && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 bg-[#4ECDC4]/20 text-[#4ECDC4] flex items-center gap-0.5">
+            🏪 {character.stallName || '摆摊'}
+          </span>
+        )}
         <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${config.tagColor}`}>
           {config.label}
         </span>
@@ -105,15 +123,26 @@ function CharacterItem({ character }: { character: NearbyCharacter }) {
           className="absolute left-0 right-0 z-30 mt-1 bg-[#1a2f2f] border border-[#2d5a5a]/50 rounded-lg shadow-lg shadow-black/40 overflow-hidden"
         >
           <button
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#e8e4dc] hover:bg-[#2d5a5a]/30 transition-colors duration-150"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#e8e4dc] hover:bg-[#2d5a5a]/30 transition-colors duration-150 cursor-pointer"
             style={{ fontFamily: 'Noto Serif SC, serif' }}
             onClick={(e) => { e.stopPropagation(); handleAction('dialog'); }}
           >
             <MessageCircle className="w-3.5 h-3.5 text-[#5ab8b8]" />
             <span>对话</span>
           </button>
+          {/* 交易按钮 - 仅当有摊位时显示 */}
+          {character.hasStall && character.stallId && (
+            <button
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#e8e4dc] hover:bg-[#4ECDC4]/20 transition-colors duration-150 cursor-pointer"
+              style={{ fontFamily: 'Noto Serif SC, serif' }}
+              onClick={(e) => { e.stopPropagation(); handleTrade(); }}
+            >
+              <ShoppingBag className="w-3.5 h-3.5 text-[#4ECDC4]" />
+              <span>交易</span>
+            </button>
+          )}
           <button
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#e8e4dc] hover:bg-[#2d5a5a]/30 transition-colors duration-150"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#e8e4dc] hover:bg-[#2d5a5a]/30 transition-colors duration-150 cursor-pointer"
             style={{ fontFamily: 'Noto Serif SC, serif' }}
             onClick={(e) => { e.stopPropagation(); handleAction('attack'); }}
           >
@@ -126,7 +155,11 @@ function CharacterItem({ character }: { character: NearbyCharacter }) {
   );
 }
 
-export function CharacterList() {
+interface CharacterListProps {
+  onTrade?: (stallId: string, ownerName: string) => void;
+}
+
+export function CharacterList({ onTrade }: CharacterListProps) {
   const { nearbyCharacters, fetchNearbyCharacters } = useGameStore();
 
   // 首次挂载时加载数据
@@ -155,7 +188,7 @@ export function CharacterList() {
         <span className="text-[#5a7a7a] text-[10px]">{nearbyCharacters.length}</span>
       </div>
       {nearbyCharacters.map((character) => (
-        <CharacterItem key={character.id} character={character} />
+        <CharacterItem key={character.id} character={character} onTrade={onTrade} />
       ))}
     </div>
   );

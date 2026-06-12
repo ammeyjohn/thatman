@@ -23,6 +23,7 @@ export interface CharacterState {
   karma: number;
   karmaLevel: number;
   karmaTitle: string;
+  spiritStones: SpiritStones;
 }
 
 export interface BusyState {
@@ -174,6 +175,9 @@ export interface NearbyCharacter {
   avatar?: string;
   uid?: string;           // 真实玩家才有
   isOnline?: boolean;     // 是否在线
+  hasStall?: boolean;     // 是否有摊位
+  stallId?: string;       // 摊位ID
+  stallName?: string;     // 摊位名称
 }
 
 export interface OnlinePlayer {
@@ -292,5 +296,39 @@ export interface KarmaBond {
   bondDesc: string;
   totalKarma: number;
   resolved: boolean;
+}
+
+// 灵石
+export interface SpiritStones {
+  low: number;      // 下品灵石
+  medium: number;   // 中品灵石
+  high: number;     // 上品灵石
+  top: number;      // 极品灵石
+}
+
+// 摊位物品
+export interface StallItem {
+  itemId: string;
+  name: string;
+  type: string;
+  description: string;
+  quantity: number;
+  price: number;
+  isCustomPrice: boolean;
+  grade?: string;
+}
+
+// 摊位
+export interface Stall {
+  stallId: string;
+  ownerUid: string;
+  ownerName: string;
+  ownerType: 'player' | 'npc';
+  stallName: string;
+  location: string;
+  items: StallItem[];
+  status: 'open' | 'closed';
+  createdAt: number;
+  updatedAt: number;
 }
 
