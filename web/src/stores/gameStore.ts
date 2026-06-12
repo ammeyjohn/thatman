@@ -54,6 +54,7 @@ interface GameState {
   fetchWorldTime: () => Promise<void>;
   fetchWeather: () => Promise<void>;
   fetchInventory: () => Promise<void>;
+  deleteInventoryItem: (itemId: string) => Promise<void>;
   fetchEquipment: () => Promise<void>;
   fetchBusyState: () => Promise<void>;
   interruptAction: () => Promise<void>;
@@ -773,6 +774,36 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch (error) {
       console.error('获取储物袋信息失败:', error);
+    }
+  },
+
+  deleteInventoryItem: async (itemId: string) => {
+    const uid = getOrCreateUserId();
+    if (!uid) return;
+
+    try {
+      const response = await fetch(
+        `${config.API_BASE_URL}/gm/inventory/${encodeURIComponent(itemId)}?uid=${encodeURIComponent(uid)}`,
+        {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+        }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        console.error('删除物品失败:', data?.error?.message || response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (data.deleted && Array.isArray(data.inventory)) {
+        set((state) => ({
+          character: { ...state.character, inventory: data.inventory },
+        }));
+        console.log('[Inventory] 物品已删除:', itemId);
+      }
+    } catch (error) {
+      console.error('删除物品失败:', error);
     }
   },
 

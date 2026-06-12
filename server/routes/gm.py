@@ -1802,6 +1802,111 @@ def get_inventory():
         }), 500
 
 
+@gm_bp.route('/gm/inventory/<item_id>', methods=['DELETE'])
+def delete_inventory_item(item_id):
+    """
+    删除玩家背包中的指定物品
+
+    路径参数:
+        item_id: 物品ID（必填）
+
+    查询参数:
+        uid: 玩家唯一ID（必填）
+
+    请求头:
+        Authorization: Bearer <token>（必填）
+
+    响应格式:
+    {
+        "uid": "user_123_abc",
+        "deleted": true,
+        "item_id": "item1",
+        "inventory": [...]
+    }
+    """
+    # 验证 Bearer token
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    token = auth_header[7:]
+    payload = _verify_token(token)
+    if not payload:
+        return jsonify({
+            'error': {
+                'message': '未授权访问',
+                'type': 'authentication_error',
+                'code': 'unauthorized'
+            }
+        }), 401
+
+    # 验证 uid 参数
+    uid = request.args.get('uid', '')
+    if not uid:
+        return jsonify({
+            'error': {
+                'message': 'uid 不能为空',
+                'type': 'invalid_request_error',
+                'code': 'invalid_request'
+            }
+        }), 400
+
+    try:
+        storage = _get_storage()
+        player_data = storage.couch_get_player(uid)
+
+        if not player_data or 'inventory' not in player_data:
+            return jsonify({
+                'error': {
+                    'message': '玩家不存在或背包为空',
+                    'type': 'not_found_error',
+                    'code': 'not_found'
+                }
+            }), 404
+
+        inventory = player_data['inventory']
+        original_length = len(inventory)
+
+        # 删除匹配 id 的物品
+        player_data['inventory'] = [
+            item for item in inventory
+            if item.get('id') != item_id
+        ]
+
+        if len(player_data['inventory']) == original_length:
+            return jsonify({
+                'error': {
+                    'message': f'未找到物品: {item_id}',
+                    'type': 'not_found_error',
+                    'code': 'item_not_found'
+                }
+            }), 404
+
+        storage.couch_save_player(uid, player_data)
+
+        return jsonify({
+            'uid': uid,
+            'deleted': True,
+            'item_id': item_id,
+            'inventory': player_data['inventory'],
+        })
+    except Exception as e:
+        error_log(f"删除玩家背包物品失败: {e}")
+        return jsonify({
+            'error': {
+                'message': f'服务器内部错误: {str(e)}',
+                'type': 'internal_server_error',
+                'code': 'internal_error'
+            }
+        }), 500
+
+
 @gm_bp.route('/gm/equipment', methods=['GET'])
 def get_equipment():
     """
