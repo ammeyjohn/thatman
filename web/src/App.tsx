@@ -205,7 +205,7 @@ function App() {
           className={`absolute z-50 flex items-center justify-center w-6 h-12 rounded-l-md bg-[#1a2f2f] border border-[#2d5a5a]/50 text-[#5a7a7a] hover:text-[#c9a227] hover:border-[#c9a227]/50 transition-all duration-300 cursor-pointer ${
             rightCollapsed ? 'right-0' : 'right-0'
           }`}
-          style={{ top: '50%', transform: 'translateY(-50%)' }}
+          style={{ top: '50%', transform: 'translateY(-50%)', zIndex: 49 }}
           title={rightCollapsed ? '展开右侧面板' : '缩进右侧面板'}
         >
           {rightCollapsed ? (
